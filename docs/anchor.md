@@ -18,7 +18,7 @@
   - `last_scan_dir`：最近扫描目录
   - `apk_needs_t`：需要 `-t` 的 APK 名称列表
   - **生成规则**：首次运行自动创建；exe 运行后在 AppData 目录生成/更新
-- **自动化打包**：GitHub Actions 在 Windows 环境使用 PyInstaller 生成 exe，可手动触发或打 tag。
+- **自动化打包**：GitHub Actions 在 Windows 环境使用 PyInstaller 生成 exe，可手动触发或打 tag；tag 触发时会将 exe 上传到 release assets。
 
 ## 目录结构与职责
 - `src/main.py`：UI 与交互入口

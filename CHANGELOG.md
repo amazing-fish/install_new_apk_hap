@@ -1,5 +1,9 @@
 # 变更记录
 
+## v0.1.11 - bugfix
+- tag 触发的 release 构建会将 exe 上传到 release assets。
+- 默认窗口宽度调整为 500dp。
+
 ## v0.1.10 - bugfix
 - 刷新设备列表与安装前探测改为后台线程执行，避免 exe 刷新时主线程卡死。
 - Windows 打包运行时调用 adb/hdc 使用无控制台模式，避免弹窗闪现。
