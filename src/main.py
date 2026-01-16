@@ -1,3 +1,4 @@
+import threading
 import tkinter as tk
 from datetime import datetime
 from pathlib import Path
@@ -94,7 +95,10 @@ class App(tk.Tk):
 
         install_frame = ttk.Frame(container)
         install_frame.pack(fill=tk.X, pady=8)
-        ttk.Button(install_frame, text="安装到所选设备", command=self.install_to_selected).pack(side=tk.LEFT)
+        self.install_button = ttk.Button(
+            install_frame, text="安装到所选设备", command=self.install_to_selected
+        )
+        self.install_button.pack(side=tk.LEFT)
 
         log_frame = ttk.LabelFrame(container, text="日志")
         log_frame.pack(fill=tk.BOTH, expand=True, pady=8)
@@ -111,6 +115,7 @@ class App(tk.Tk):
         self.device_tree.delete(*self.device_tree.get_children())
         self.devices = detect_devices()
         name_mapping: Dict[str, str] = self.config_manager.data.get("device_names", {})
+        only_device_id: Optional[str] = None
         for device in self.devices:
             name = name_mapping.get(device.device_id, "")
             self.device_tree.insert(
@@ -119,6 +124,12 @@ class App(tk.Tk):
                 iid=device.device_id,
                 values=(device.device_id, name, device.status, device.platform),
             )
+            if len(self.devices) == 1:
+                only_device_id = device.device_id
+        if only_device_id:
+            self.device_tree.selection_set(only_device_id)
+            current_name = self.device_tree.set(only_device_id, "name")
+            self.name_var.set(current_name)
         android_count = sum(1 for device in self.devices if device.platform == "android")
         harmony_count = sum(1 for device in self.devices if device.platform == "harmony")
         total_count = len(self.devices)
@@ -142,9 +153,13 @@ class App(tk.Tk):
     def save_device_name(self) -> None:
         selection = self.device_tree.selection()
         if len(selection) != 1:
-            messagebox.showwarning("提示", "请选择一个设备进行命名")
-            return
-        device_id = selection[0]
+            if len(self.devices) == 1:
+                device_id = self.devices[0].device_id
+            else:
+                messagebox.showwarning("提示", "请选择一个设备进行命名")
+                return
+        else:
+            device_id = selection[0]
         name = self.name_var.get().strip()
         self.config_manager.set_device_name(device_id, name)
         self.device_tree.set(device_id, "name", name)
@@ -211,33 +226,53 @@ class App(tk.Tk):
             messagebox.showwarning("提示", "未找到可安装的 APK/HAP")
             self.log("安装失败：未找到可安装的 APK/HAP")
             return
-        self.log(f"开始安装到所选设备: {', '.join(selection)}")
+        self._set_install_state(True)
+        selection_list = list(selection)
+        threading.Thread(
+            target=self._install_worker,
+            args=(selection_list,),
+            daemon=True,
+        ).start()
+
+    def _set_install_state(self, installing: bool) -> None:
+        state = tk.DISABLED if installing else tk.NORMAL
+        self.install_button.config(state=state)
+
+    def _log_threadsafe(self, message: str) -> None:
+        if threading.current_thread() is threading.main_thread():
+            self.log(message)
+        else:
+            self.after(0, self.log, message)
+
+    def _install_worker(self, selection: List[str]) -> None:
+        self._log_threadsafe(f"开始安装到所选设备: {', '.join(selection)}")
         for device_id in selection:
             device = next((d for d in self.devices if d.device_id == device_id), None)
             if not device:
-                self.log(f"{device_id}: 设备信息未找到，跳过")
+                self._log_threadsafe(f"{device_id}: 设备信息未找到，跳过")
                 continue
             if device.platform == "android":
                 if not self.latest_apk:
-                    self.log(f"{device_id}: 未找到 APK，跳过")
+                    self._log_threadsafe(f"{device_id}: 未找到 APK，跳过")
                     continue
                 allow_test = self.apk_test_var.get()
                 result = install_android(device_id, self.latest_apk, allow_test)
-                self.log(f"Android {device_id} 执行命令: {' '.join(result.command)}")
-                self.log(
+                self._log_threadsafe(f"Android {device_id} 执行命令: {' '.join(result.command)}")
+                self._log_threadsafe(
                     f"Android {device_id} 安装结果: {result.process.returncode}\n"
                     f"{result.process.stdout}\n{result.process.stderr}"
                 )
             else:
                 if not self.latest_hap:
-                    self.log(f"{device_id}: 未找到 HAP，跳过")
+                    self._log_threadsafe(f"{device_id}: 未找到 HAP，跳过")
                     continue
                 result = install_harmony(device_id, self.latest_hap)
-                self.log(f"Harmony {device_id} 执行命令: {' '.join(result.command)}")
-                self.log(
+                self._log_threadsafe(f"Harmony {device_id} 执行命令: {' '.join(result.command)}")
+                self._log_threadsafe(
                     f"Harmony {device_id} 安装结果: {result.process.returncode}\n"
                     f"{result.process.stdout}\n{result.process.stderr}"
                 )
+        self.after(0, self._set_install_state, False)
 
 
 if __name__ == "__main__":
