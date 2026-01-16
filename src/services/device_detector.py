@@ -20,7 +20,32 @@ def _run_command(command: List[str]) -> str:
         )
     except FileNotFoundError:
         return ""
-    return result.stdout.strip()
+    stdout = result.stdout.strip()
+    stderr = result.stderr.strip()
+    return stdout or stderr
+
+
+def _is_valid_hdc_device_line(line: str) -> bool:
+    if not line:
+        return False
+    lower_line = line.lower()
+    invalid_keywords = (
+        "empty",
+        "no device",
+        "no devices",
+        "no target",
+        "not found",
+        "list of",
+        "target count",
+        "device list",
+        "hdc server",
+        "hdcserver",
+    )
+    if any(keyword in lower_line for keyword in invalid_keywords):
+        return False
+    if any(char.isspace() for char in line):
+        return False
+    return True
 
 
 def detect_adb_devices() -> List[DeviceInfo]:
@@ -50,11 +75,9 @@ def detect_hdc_devices() -> List[DeviceInfo]:
     lines = output.splitlines()
     for line in lines:
         line = line.strip()
-        if not line:
+        if not _is_valid_hdc_device_line(line):
             continue
-        device_id = line
-        status = "device"
-        devices.append(DeviceInfo(device_id=device_id, platform="harmony", status=status))
+        devices.append(DeviceInfo(device_id=line, platform="harmony", status="device"))
     return devices
 
 
