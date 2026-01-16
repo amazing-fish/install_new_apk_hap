@@ -1,3 +1,4 @@
+import os
 import subprocess
 from dataclasses import dataclass
 from typing import List
@@ -12,11 +13,16 @@ class DeviceInfo:
 
 def _run_command(command: List[str]) -> str:
     try:
+        run_kwargs = {
+            "check": False,
+            "capture_output": True,
+            "text": True,
+        }
+        if os.name == "nt":
+            run_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
         result = subprocess.run(
             command,
-            check=False,
-            capture_output=True,
-            text=True,
+            **run_kwargs,
         )
     except FileNotFoundError:
         return ""

@@ -3,6 +3,7 @@
 ## 技术路径
 - **运行方式**：本地 Python 3（内置 Tkinter GUI），不依赖额外 GUI 框架。
 - **日志输出**：日志窗口记录刷新、扫描、安装命令与执行结果，便于调试定位。
+- **线程策略**：设备刷新与安装前探测在后台线程执行，避免 UI 主线程阻塞。
 - **设备探测**：
   - Android：`adb devices -l`
   - Harmony：`hdc list targets`
@@ -11,6 +12,7 @@
 - **安装命令**：
   - Android：`adb -s <device_id> install [-t] <apk>`
   - Harmony：`hdc -t <device_id> install <hap>`
+- **Windows 运行**：调用 adb/hdc 时使用无控制台模式，避免弹窗闪现。
 - **配置文件**：`%APPDATA%/install_new_apk_hap/app_config.json`（Windows）
   - `device_names`：设备自定义命名
   - `last_scan_dir`：最近扫描目录

@@ -4,7 +4,7 @@ import tkinter as tk
 from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set
 
 from config_manager import ConfigManager
 from services.device_detector import DeviceInfo, detect_devices
@@ -62,7 +62,8 @@ class App(tk.Tk):
         button_frame = ttk.Frame(container)
         button_frame.pack(fill=tk.X, pady=8)
 
-        ttk.Button(button_frame, text="刷新设备", command=self.refresh_devices).pack(side=tk.LEFT)
+        self.refresh_button = ttk.Button(button_frame, text="刷新设备", command=self.refresh_devices)
+        self.refresh_button.pack(side=tk.LEFT)
 
         name_frame = ttk.Frame(container)
         name_frame.pack(fill=tk.X, pady=8)
@@ -122,9 +123,17 @@ class App(tk.Tk):
         self.log_text.see(tk.END)
 
     def refresh_devices(self) -> None:
-        self.log("开始刷新设备列表")
+        self._set_refresh_state(True)
+        self._log_threadsafe("开始刷新设备列表")
+        threading.Thread(target=self._refresh_devices_worker, daemon=True).start()
+
+    def _refresh_devices_worker(self) -> None:
+        devices = detect_devices()
+        self.after(0, self._apply_device_refresh, devices)
+
+    def _apply_device_refresh(self, devices: List[DeviceInfo]) -> None:
+        self.devices = devices
         self.device_tree.delete(*self.device_tree.get_children())
-        self.devices = detect_devices()
         self._update_device_tree_height()
         name_mapping: Dict[str, str] = self.config_manager.data.get("device_names", {})
         only_device_id: Optional[str] = None
@@ -152,6 +161,7 @@ class App(tk.Tk):
                 "设备列表已刷新："
                 f"Android {android_count} 台, Harmony {harmony_count} 台, 总计 {total_count} 台"
             )
+        self._set_refresh_state(False)
 
     def _update_device_tree_height(self) -> None:
         display_count = max(1, min(len(self.devices), self._DEVICE_LIST_MAX_ROWS))
@@ -238,7 +248,19 @@ class App(tk.Tk):
             self.log("安装失败：未找到可安装的 APK/HAP")
             return
         previous_selection = set(self.device_tree.selection())
-        self.refresh_devices()
+        self._set_install_state(True)
+        threading.Thread(
+            target=self._prepare_install_worker,
+            args=(previous_selection,),
+            daemon=True,
+        ).start()
+
+    def _prepare_install_worker(self, previous_selection: Set[str]) -> None:
+        devices = detect_devices()
+        self.after(0, self._finalize_install, devices, previous_selection)
+
+    def _finalize_install(self, devices: List[DeviceInfo], previous_selection: Set[str]) -> None:
+        self._apply_device_refresh(devices)
         current_device_ids = {device.device_id for device in self.devices}
         missing_devices = previous_selection - current_device_ids
         if missing_devices:
@@ -256,8 +278,8 @@ class App(tk.Tk):
             else:
                 messagebox.showwarning("提示", "请先选择设备")
                 self.log("安装失败：未选择设备")
+                self._set_install_state(False)
                 return
-        self._set_install_state(True)
         threading.Thread(
             target=self._install_worker,
             args=(selection_list,),
@@ -267,6 +289,10 @@ class App(tk.Tk):
     def _set_install_state(self, installing: bool) -> None:
         state = tk.DISABLED if installing else tk.NORMAL
         self.install_button.config(state=state)
+
+    def _set_refresh_state(self, refreshing: bool) -> None:
+        state = tk.DISABLED if refreshing else tk.NORMAL
+        self.refresh_button.config(state=state)
 
     def _log_threadsafe(self, message: str) -> None:
         if threading.current_thread() is threading.main_thread():
