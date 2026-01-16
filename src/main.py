@@ -12,6 +12,8 @@ from services.package_scanner import find_latest_packages
 
 
 class App(tk.Tk):
+    _DEVICE_LIST_MAX_ROWS = 8
+
     def __init__(self) -> None:
         super().__init__()
         self.title("APK/HAP 安装工具")
@@ -39,7 +41,7 @@ class App(tk.Tk):
             columns=columns,
             show="headings",
             selectmode="extended",
-            height=7,
+            height=1,
         )
         self.device_tree.heading("device_id", text="设备码")
         self.device_tree.heading("name", text="名称")
@@ -114,6 +116,7 @@ class App(tk.Tk):
         self.log("开始刷新设备列表")
         self.device_tree.delete(*self.device_tree.get_children())
         self.devices = detect_devices()
+        self._update_device_tree_height()
         name_mapping: Dict[str, str] = self.config_manager.data.get("device_names", {})
         only_device_id: Optional[str] = None
         for device in self.devices:
@@ -140,6 +143,10 @@ class App(tk.Tk):
                 "设备列表已刷新："
                 f"Android {android_count} 台, Harmony {harmony_count} 台, 总计 {total_count} 台"
             )
+
+    def _update_device_tree_height(self) -> None:
+        display_count = max(1, min(len(self.devices), self._DEVICE_LIST_MAX_ROWS))
+        self.device_tree.configure(height=display_count)
 
     def on_device_select(self, _event: tk.Event) -> None:
         selection = self.device_tree.selection()
