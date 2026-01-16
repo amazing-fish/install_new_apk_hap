@@ -1,4 +1,5 @@
 import tkinter as tk
+from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from typing import Dict, List, Optional
@@ -99,10 +100,12 @@ class App(tk.Tk):
         self.log_text.pack(fill=tk.BOTH, expand=True)
 
     def log(self, message: str) -> None:
-        self.log_text.insert(tk.END, f"{message}\n")
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        self.log_text.insert(tk.END, f"[{timestamp}] {message}\n")
         self.log_text.see(tk.END)
 
     def refresh_devices(self) -> None:
+        self.log("开始刷新设备列表")
         self.device_tree.delete(*self.device_tree.get_children())
         self.devices = detect_devices()
         name_mapping: Dict[str, str] = self.config_manager.data.get("device_names", {})
@@ -114,7 +117,16 @@ class App(tk.Tk):
                 iid=device.device_id,
                 values=(device.platform, device.status, name),
             )
-        self.log("设备列表已刷新")
+        android_count = sum(1 for device in self.devices if device.platform == "android")
+        harmony_count = sum(1 for device in self.devices if device.platform == "harmony")
+        total_count = len(self.devices)
+        if total_count == 0:
+            self.log("设备列表已刷新：未检测到设备")
+        else:
+            self.log(
+                "设备列表已刷新："
+                f"Android {android_count} 台, Harmony {harmony_count} 台, 总计 {total_count} 台"
+            )
 
     def on_device_select(self, _event: tk.Event) -> None:
         selection = self.device_tree.selection()
@@ -139,26 +151,34 @@ class App(tk.Tk):
     def choose_folder(self) -> None:
         folder = filedialog.askdirectory()
         if not folder:
+            self.log("已取消选择目录")
             return
         self.folder_var.set(folder)
+        self.log(f"已选择安装包目录: {folder}")
         self.config_manager.set_last_scan_dir(folder)
         self.scan_latest_packages()
 
     def load_last_scan_dir(self) -> None:
         last_dir = self.config_manager.data.get("last_scan_dir", "")
         if last_dir:
+            self.log(f"加载上次扫描目录: {last_dir}")
             self.folder_var.set(last_dir)
             self.scan_latest_packages()
+        else:
+            self.log("未找到上次扫描目录")
 
     def scan_latest_packages(self) -> None:
         folder = self.folder_var.get().strip()
         if not folder:
             messagebox.showwarning("提示", "请先选择目录")
+            self.log("扫描失败：未选择目录")
             return
         directory = Path(folder)
         if not directory.exists():
             messagebox.showwarning("提示", "目录不存在")
+            self.log(f"扫描失败：目录不存在 {directory}")
             return
+        self.log(f"开始扫描最新安装包: {directory}")
         package_info = find_latest_packages(directory)
         self.latest_apk = package_info.apk_path
         self.latest_hap = package_info.hap_path
@@ -168,11 +188,12 @@ class App(tk.Tk):
         self.hap_label.config(text=f"HAP: {hap_name}")
         apk_needs_t = self.config_manager.data.get("apk_needs_t", [])
         self.apk_test_var.set(self.latest_apk is not None and self.latest_apk.name in apk_needs_t)
-        self.log("已扫描最新安装包")
+        self.log(f"已扫描最新安装包: APK={apk_name}, HAP={hap_name}")
 
     def remember_apk_need_t(self) -> None:
         if not self.latest_apk:
             messagebox.showwarning("提示", "未找到 APK")
+            self.log("记住 APK 需要 -t 失败：未找到 APK")
             return
         self.config_manager.add_apk_need_t(self.latest_apk.name)
         self.apk_test_var.set(True)
@@ -182,13 +203,17 @@ class App(tk.Tk):
         selection = self.device_tree.selection()
         if not selection:
             messagebox.showwarning("提示", "请先选择设备")
+            self.log("安装失败：未选择设备")
             return
         if not self.latest_apk and not self.latest_hap:
             messagebox.showwarning("提示", "未找到可安装的 APK/HAP")
+            self.log("安装失败：未找到可安装的 APK/HAP")
             return
+        self.log(f"开始安装到所选设备: {', '.join(selection)}")
         for device_id in selection:
             device = next((d for d in self.devices if d.device_id == device_id), None)
             if not device:
+                self.log(f"{device_id}: 设备信息未找到，跳过")
                 continue
             if device.platform == "android":
                 if not self.latest_apk:
@@ -196,18 +221,20 @@ class App(tk.Tk):
                     continue
                 allow_test = self.apk_test_var.get()
                 result = install_android(device_id, self.latest_apk, allow_test)
+                self.log(f"Android {device_id} 执行命令: {' '.join(result.command)}")
                 self.log(
-                    f"Android {device_id} 安装结果: {result.returncode}\n"
-                    f"{result.stdout}\n{result.stderr}"
+                    f"Android {device_id} 安装结果: {result.process.returncode}\n"
+                    f"{result.process.stdout}\n{result.process.stderr}"
                 )
             else:
                 if not self.latest_hap:
                     self.log(f"{device_id}: 未找到 HAP，跳过")
                     continue
                 result = install_harmony(device_id, self.latest_hap)
+                self.log(f"Harmony {device_id} 执行命令: {' '.join(result.command)}")
                 self.log(
-                    f"Harmony {device_id} 安装结果: {result.returncode}\n"
-                    f"{result.stdout}\n{result.stderr}"
+                    f"Harmony {device_id} 安装结果: {result.process.returncode}\n"
+                    f"{result.process.stdout}\n{result.process.stderr}"
                 )
 
 

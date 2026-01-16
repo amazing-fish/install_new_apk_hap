@@ -2,6 +2,7 @@
 
 ## 技术路径
 - **运行方式**：本地 Python 3（内置 Tkinter GUI），不依赖额外 GUI 框架。
+- **日志输出**：日志窗口记录刷新、扫描、安装命令与执行结果，便于调试定位。
 - **设备探测**：
   - Android：`adb devices -l`
   - Harmony：`hdc list targets`
