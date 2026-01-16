@@ -26,55 +26,14 @@ jobs:
       - name: Build EXE
         run: pyinstaller --noconsole --onefile --name install_new_apk_hap src/main.py
 
-      - name: Generate SHA256
-        shell: pwsh
-        run: |
-          $hash = (Get-FileHash -Path dist/install_new_apk_hap.exe -Algorithm SHA256).Hash.ToLower()
-          "$hash  install_new_apk_hap.exe" | Out-File -FilePath dist/install_new_apk_hap.exe.sha256 -Encoding ascii
-
-      - name: Install GPG
-        if: startsWith(github.ref, 'refs/tags/v')
-        run: choco install gnupg -y
-
-      - name: Import GPG key
-        if: startsWith(github.ref, 'refs/tags/v')
-        shell: pwsh
-        run: |
-          if (-not "${{ secrets.RELEASE_GPG_PRIVATE_KEY }}") {
-            Write-Error "Missing RELEASE_GPG_PRIVATE_KEY"
-            exit 1
-          }
-          "${{ secrets.RELEASE_GPG_PRIVATE_KEY }}" | gpg --batch --import
-
-      - name: Sign checksum
-        if: startsWith(github.ref, 'refs/tags/v')
-        shell: pwsh
-        run: |
-          $keyId = "${{ secrets.RELEASE_GPG_KEY_ID }}"
-          $passphrase = "${{ secrets.RELEASE_GPG_PASSPHRASE }}"
-          $baseArgs = @("--batch", "--yes", "--pinentry-mode", "loopback")
-          if ($passphrase) {
-            $baseArgs += @("--passphrase", $passphrase)
-          }
-          if ($keyId) {
-            $baseArgs += @("--local-user", $keyId)
-          }
-          gpg @baseArgs --detach-sign --armor -o dist/install_new_apk_hap.exe.sha256.asc dist/install_new_apk_hap.exe.sha256
-
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: install_new_apk_hap-windows
-          path: |
-            dist/install_new_apk_hap.exe
-            dist/install_new_apk_hap.exe.sha256
-            dist/install_new_apk_hap.exe.sha256.asc
+          path: dist/install_new_apk_hap.exe
 
       - name: Upload release asset
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            dist/install_new_apk_hap.exe
-            dist/install_new_apk_hap.exe.sha256
-            dist/install_new_apk_hap.exe.sha256.asc
+          files: dist/install_new_apk_hap.exe

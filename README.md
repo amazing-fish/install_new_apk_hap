@@ -22,7 +22,3 @@ python3 src/main.py
 - 版本号文件：`VERSION`
 - 变更记录：`CHANGELOG.md`
 - 技术路径稳定说明：`docs/anchor.md`
-
-## Release 校验
-- Release 会提供 `install_new_apk_hap.exe.sha256` 与签名文件 `install_new_apk_hap.exe.sha256.asc`。
-- 校验方法参考：`docs/release_verification.md`
