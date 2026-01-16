@@ -52,6 +52,8 @@ def detect_hdc_devices() -> List[DeviceInfo]:
         line = line.strip()
         if not line:
             continue
+        if line == "[Empty]":
+            continue
         device_id = line
         status = "device"
         devices.append(DeviceInfo(device_id=device_id, platform="harmony", status=status))

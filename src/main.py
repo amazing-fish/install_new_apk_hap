@@ -32,7 +32,7 @@ class App(tk.Tk):
         device_frame = ttk.LabelFrame(container, text="设备列表")
         device_frame.pack(fill=tk.BOTH, expand=False)
 
-        columns = ("platform", "status", "name")
+        columns = ("device_id", "name", "status", "platform")
         self.device_tree = ttk.Treeview(
             device_frame,
             columns=columns,
@@ -40,12 +40,14 @@ class App(tk.Tk):
             selectmode="extended",
             height=7,
         )
-        self.device_tree.heading("platform", text="平台")
+        self.device_tree.heading("device_id", text="设备码")
+        self.device_tree.heading("name", text="名称")
         self.device_tree.heading("status", text="状态")
-        self.device_tree.heading("name", text="自定义名称")
-        self.device_tree.column("platform", width=120)
+        self.device_tree.heading("platform", text="平台")
+        self.device_tree.column("device_id", width=260)
+        self.device_tree.column("name", width=200)
         self.device_tree.column("status", width=120)
-        self.device_tree.column("name", width=220)
+        self.device_tree.column("platform", width=120)
         self.device_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         self.device_tree.bind("<<TreeviewSelect>>", self.on_device_select)
 
@@ -115,7 +117,7 @@ class App(tk.Tk):
                 "",
                 tk.END,
                 iid=device.device_id,
-                values=(device.platform, device.status, name),
+                values=(device.device_id, name, device.status, device.platform),
             )
         android_count = sum(1 for device in self.devices if device.platform == "android")
         harmony_count = sum(1 for device in self.devices if device.platform == "harmony")
