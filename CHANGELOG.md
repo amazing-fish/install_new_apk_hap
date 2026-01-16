@@ -1,5 +1,9 @@
 # 变更记录
 
+## v0.1.12 - feature
+- Release 产物增加 SHA256 校验文件与 GPG 签名。
+- 补充 Release 下载校验文档说明。
+
 ## v0.1.11 - bugfix
 - tag 触发的 release 构建会将 exe 上传到 release assets。
 - 默认窗口宽度调整为 500dp。
