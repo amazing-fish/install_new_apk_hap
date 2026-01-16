@@ -6,6 +6,7 @@
 - **设备探测**：
   - Android：`adb devices -l`
   - Harmony：`hdc list targets`
+- **设备列表**：行数在 8 条以内根据设备数量自适应高度，避免空白占位。
 - **安装命令**：
   - Android：`adb -s <device_id> install [-t] <apk>`
   - Harmony：`hdc -t <device_id> install <hap>`
@@ -24,7 +25,7 @@
 ## 版本管理
 - **版本号规则**：`v主.次.修`
 - **变更类型标记**：`refactor`、`feature`、`bugfix`
-- **变更记录**：所有版本变更写入 `CHANGELOG.md`
+- **变更记录**：所有版本变更写入 `CHANGELOG.md`，按倒序展示
 
 ## 修改日志稳定要求
 - 只允许在 `CHANGELOG.md` 中追加版本条目，不修改历史条目。
