@@ -7,6 +7,7 @@
   - Android：`adb devices -l`
   - Harmony：`hdc list targets`
 - **设备列表**：行数在 8 条以内根据设备数量自适应高度，避免空白占位。
+- **安装前刷新**：点击安装前刷新设备列表，已选设备断开会提示，若仅剩单设备则默认安装到该设备。
 - **安装命令**：
   - Android：`adb -s <device_id> install [-t] <apk>`
   - Harmony：`hdc -t <device_id> install <hap>`
