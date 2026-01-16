@@ -224,17 +224,31 @@ class App(tk.Tk):
         self.log(f"已记住 APK 需要 -t: {self.latest_apk.name}")
 
     def install_to_selected(self) -> None:
-        selection = self.device_tree.selection()
-        if not selection:
-            messagebox.showwarning("提示", "请先选择设备")
-            self.log("安装失败：未选择设备")
-            return
         if not self.latest_apk and not self.latest_hap:
             messagebox.showwarning("提示", "未找到可安装的 APK/HAP")
             self.log("安装失败：未找到可安装的 APK/HAP")
             return
+        previous_selection = set(self.device_tree.selection())
+        self.refresh_devices()
+        current_device_ids = {device.device_id for device in self.devices}
+        missing_devices = previous_selection - current_device_ids
+        if missing_devices:
+            missing_text = "，".join(sorted(missing_devices))
+            messagebox.showwarning("提示", f"已选设备已断开: {missing_text}，请确认设备状态")
+            self.log(f"安装提示：已选设备断开 {missing_text}")
+        selection_list = [device_id for device_id in previous_selection if device_id in current_device_ids]
+        if not selection_list:
+            if len(self.devices) == 1:
+                selection_list = [self.devices[0].device_id]
+                self.device_tree.selection_set(selection_list[0])
+                current_name = self.device_tree.set(selection_list[0], "name")
+                self.name_var.set(current_name)
+                self.log(f"检测到单设备，默认安装到: {selection_list[0]}")
+            else:
+                messagebox.showwarning("提示", "请先选择设备")
+                self.log("安装失败：未选择设备")
+                return
         self._set_install_state(True)
-        selection_list = list(selection)
         threading.Thread(
             target=self._install_worker,
             args=(selection_list,),
