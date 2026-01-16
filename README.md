@@ -14,6 +14,10 @@
 python3 src/main.py
 ```
 
+## 配置说明
+- 配置文件会在首次运行时自动生成到 `%APPDATA%/install_new_apk_hap/app_config.json`（Windows）。
+- 该配置为本地运行状态，已被忽略提交；打包的 exe 运行后会在 AppData 目录生成/更新该配置。
+
 ## 版本与变更记录
 - 版本号文件：`VERSION`
 - 变更记录：`CHANGELOG.md`

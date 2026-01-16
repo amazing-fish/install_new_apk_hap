@@ -1,3 +1,4 @@
+import os
 import threading
 import tkinter as tk
 from datetime import datetime
@@ -19,7 +20,7 @@ class App(tk.Tk):
         self.title("APK/HAP 安装工具")
         self.geometry("980x600")
 
-        self.config_manager = ConfigManager(Path("config/app_config.json"))
+        self.config_manager = ConfigManager(self._get_config_path())
         self.devices: List[DeviceInfo] = []
         self.latest_apk: Optional[Path] = None
         self.latest_hap: Optional[Path] = None
@@ -106,6 +107,14 @@ class App(tk.Tk):
         log_frame.pack(fill=tk.BOTH, expand=True, pady=8)
         self.log_text = tk.Text(log_frame, height=12)
         self.log_text.pack(fill=tk.BOTH, expand=True)
+
+    def _get_config_path(self) -> Path:
+        appdata = os.getenv("APPDATA")
+        if appdata:
+            base_dir = Path(appdata)
+        else:
+            base_dir = Path.home() / ".config"
+        return base_dir / "install_new_apk_hap" / "app_config.json"
 
     def log(self, message: str) -> None:
         timestamp = datetime.now().strftime("%H:%M:%S")
