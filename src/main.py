@@ -18,7 +18,7 @@ class App(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title("APK/HAP 安装工具")
-        self.geometry("980x600")
+        self.geometry("500x600")
 
         self.config_manager = ConfigManager(self._get_config_path())
         self.devices: List[DeviceInfo] = []

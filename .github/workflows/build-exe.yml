@@ -8,6 +8,8 @@ on:
 
 jobs:
   build:
+    permissions:
+      contents: write
     runs-on: windows-latest
     steps:
       - name: Checkout
@@ -29,3 +31,9 @@ jobs:
         with:
           name: install_new_apk_hap-windows
           path: dist/install_new_apk_hap.exe
+
+      - name: Upload release asset
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/install_new_apk_hap.exe
