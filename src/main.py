@@ -24,6 +24,8 @@ class App(tk.Tk):
         self.devices: List[DeviceInfo] = []
         self.latest_apk: Optional[Path] = None
         self.latest_hap: Optional[Path] = None
+        self.apk_name_map: Dict[str, Path] = {}
+        self.hap_name_map: Dict[str, Path] = {}
 
         self._build_ui()
         self.refresh_devices()
@@ -84,10 +86,21 @@ class App(tk.Tk):
         package_frame = ttk.LabelFrame(container, text="最新安装包")
         package_frame.pack(fill=tk.X, pady=8)
 
-        self.apk_label = ttk.Label(package_frame, text="APK: 未找到")
-        self.apk_label.pack(anchor=tk.W, padx=6, pady=2)
-        self.hap_label = ttk.Label(package_frame, text="HAP: 未找到")
-        self.hap_label.pack(anchor=tk.W, padx=6, pady=2)
+        apk_row = ttk.Frame(package_frame)
+        apk_row.pack(fill=tk.X, padx=6, pady=2)
+        ttk.Label(apk_row, text="APK:").pack(side=tk.LEFT)
+        self.apk_var = tk.StringVar(value="未找到")
+        self.apk_combo = ttk.Combobox(apk_row, textvariable=self.apk_var, state="disabled", width=45)
+        self.apk_combo.pack(side=tk.LEFT, padx=6)
+        self.apk_combo.bind("<<ComboboxSelected>>", self.on_apk_selected)
+
+        hap_row = ttk.Frame(package_frame)
+        hap_row.pack(fill=tk.X, padx=6, pady=2)
+        ttk.Label(hap_row, text="HAP:").pack(side=tk.LEFT)
+        self.hap_var = tk.StringVar(value="未找到")
+        self.hap_combo = ttk.Combobox(hap_row, textvariable=self.hap_var, state="disabled", width=45)
+        self.hap_combo.pack(side=tk.LEFT, padx=6)
+        self.hap_combo.bind("<<ComboboxSelected>>", self.on_hap_selected)
 
         self.apk_test_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(package_frame, text="APK 需要 -t 安装", variable=self.apk_test_var).pack(
@@ -243,13 +256,44 @@ class App(tk.Tk):
         package_info = find_latest_packages(directory)
         self.latest_apk = package_info.apk_path
         self.latest_hap = package_info.hap_path
+        self.apk_name_map = {path.name: path for path in package_info.apk_candidates}
+        self.hap_name_map = {path.name: path for path in package_info.hap_candidates}
+        self.latest_apk = self._update_package_options(
+            self.apk_combo, self.apk_var, package_info.apk_candidates
+        )
+        self.latest_hap = self._update_package_options(
+            self.hap_combo, self.hap_var, package_info.hap_candidates
+        )
         apk_name = self.latest_apk.name if self.latest_apk else "未找到"
         hap_name = self.latest_hap.name if self.latest_hap else "未找到"
-        self.apk_label.config(text=f"APK: {apk_name}")
-        self.hap_label.config(text=f"HAP: {hap_name}")
         apk_needs_t = self.config_manager.data.get("apk_needs_t", [])
         self.apk_test_var.set(self.latest_apk is not None and self.latest_apk.name in apk_needs_t)
         self.log(f"已扫描最新安装包: APK={apk_name}, HAP={hap_name}")
+
+    def _update_package_options(
+        self,
+        combo: ttk.Combobox,
+        var: tk.StringVar,
+        candidates: List[Path],
+    ) -> Optional[Path]:
+        if not candidates:
+            combo.configure(values=["未找到"], state="disabled")
+            var.set("未找到")
+            return None
+        names = [path.name for path in candidates]
+        combo.configure(values=names, state="readonly")
+        var.set(names[0])
+        return candidates[0]
+
+    def on_apk_selected(self, _event: tk.Event) -> None:
+        selected_name = self.apk_var.get()
+        self.latest_apk = self.apk_name_map.get(selected_name)
+        apk_needs_t = self.config_manager.data.get("apk_needs_t", [])
+        self.apk_test_var.set(self.latest_apk is not None and self.latest_apk.name in apk_needs_t)
+
+    def on_hap_selected(self, _event: tk.Event) -> None:
+        selected_name = self.hap_var.get()
+        self.latest_hap = self.hap_name_map.get(selected_name)
 
     def remember_apk_need_t(self) -> None:
         if not self.latest_apk:
