@@ -106,8 +106,13 @@ class App(tk.Tk):
 
         log_frame = ttk.LabelFrame(container, text="日志")
         log_frame.pack(fill=tk.BOTH, expand=True, pady=8)
+        log_button_frame = ttk.Frame(log_frame)
+        log_button_frame.pack(fill=tk.X, padx=6, pady=(6, 0))
+        ttk.Button(log_button_frame, text="复制日志", command=self.copy_log).pack(side=tk.LEFT)
+        ttk.Button(log_button_frame, text="清空日志", command=self.clear_log).pack(side=tk.LEFT, padx=6)
         self.log_text = tk.Text(log_frame, height=12)
         self.log_text.pack(fill=tk.BOTH, expand=True)
+        self.log_text.configure(state=tk.DISABLED)
 
     def _get_config_path(self) -> Path:
         appdata = os.getenv("APPDATA")
@@ -119,8 +124,21 @@ class App(tk.Tk):
 
     def log(self, message: str) -> None:
         timestamp = datetime.now().strftime("%H:%M:%S")
+        self.log_text.configure(state=tk.NORMAL)
         self.log_text.insert(tk.END, f"[{timestamp}] {message}\n")
         self.log_text.see(tk.END)
+        self.log_text.configure(state=tk.DISABLED)
+
+    def clear_log(self) -> None:
+        self.log_text.configure(state=tk.NORMAL)
+        self.log_text.delete("1.0", tk.END)
+        self.log_text.configure(state=tk.DISABLED)
+
+    def copy_log(self) -> None:
+        content = self.log_text.get("1.0", "end-1c")
+        self.clipboard_clear()
+        if content:
+            self.clipboard_append(content)
 
     def refresh_devices(self) -> None:
         self._set_refresh_state(True)
