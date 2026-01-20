@@ -1,5 +1,8 @@
 # 变更记录
 
+## v0.1.12 - feature
+- 日志区域支持复制与清空按钮，日志框保持只读写入。
+
 ## v0.1.11 - bugfix
 - tag 触发的 release 构建会将 exe 上传到 release assets。
 - 默认窗口宽度调整为 500dp。
