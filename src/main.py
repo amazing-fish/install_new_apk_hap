@@ -1,5 +1,7 @@
 import os
+import subprocess
 import threading
+import time
 import tkinter as tk
 from datetime import datetime
 from pathlib import Path
@@ -8,7 +10,7 @@ from typing import Dict, List, Optional, Set
 
 from config_manager import ConfigManager
 from services.device_detector import DeviceInfo, detect_devices
-from services.installer import install_android, install_harmony
+from services.installer import start_android_install, start_harmony_install
 from services.package_scanner import find_latest_packages
 
 
@@ -24,6 +26,8 @@ class App(tk.Tk):
         self.devices: List[DeviceInfo] = []
         self.latest_apk: Optional[Path] = None
         self.latest_hap: Optional[Path] = None
+        self._cancel_install_event = threading.Event()
+        self._active_process: Optional[subprocess.Popen] = None
 
         self._build_ui()
         self.refresh_devices()
@@ -103,6 +107,9 @@ class App(tk.Tk):
             install_frame, text="安装到所选设备", command=self.install_to_selected
         )
         self.install_button.pack(side=tk.LEFT)
+        self.cancel_button = ttk.Button(install_frame, text="中止安装", command=self.cancel_install)
+        self.cancel_button.pack(side=tk.LEFT, padx=6)
+        self.cancel_button.config(state=tk.DISABLED)
 
         log_frame = ttk.LabelFrame(container, text="日志")
         log_frame.pack(fill=tk.BOTH, expand=True, pady=8)
@@ -267,6 +274,7 @@ class App(tk.Tk):
             return
         previous_selection = set(self.device_tree.selection())
         self._set_install_state(True)
+        self._cancel_install_event.clear()
         threading.Thread(
             target=self._prepare_install_worker,
             args=(previous_selection,),
@@ -307,10 +315,18 @@ class App(tk.Tk):
     def _set_install_state(self, installing: bool) -> None:
         state = tk.DISABLED if installing else tk.NORMAL
         self.install_button.config(state=state)
+        cancel_state = tk.NORMAL if installing else tk.DISABLED
+        self.cancel_button.config(state=cancel_state)
 
     def _set_refresh_state(self, refreshing: bool) -> None:
         state = tk.DISABLED if refreshing else tk.NORMAL
         self.refresh_button.config(state=state)
+
+    def cancel_install(self) -> None:
+        self._cancel_install_event.set()
+        self.log("已请求中止安装")
+        if self._active_process and self._active_process.poll() is None:
+            self._terminate_process(self._active_process)
 
     def _log_threadsafe(self, message: str) -> None:
         if threading.current_thread() is threading.main_thread():
@@ -321,6 +337,9 @@ class App(tk.Tk):
     def _install_worker(self, selection: List[str]) -> None:
         self._log_threadsafe(f"开始安装到所选设备: {', '.join(selection)}")
         for device_id in selection:
+            if self._cancel_install_event.is_set():
+                self._log_threadsafe("安装已中止")
+                break
             device = next((d for d in self.devices if d.device_id == device_id), None)
             if not device:
                 self._log_threadsafe(f"{device_id}: 设备信息未找到，跳过")
@@ -330,23 +349,53 @@ class App(tk.Tk):
                     self._log_threadsafe(f"{device_id}: 未找到 APK，跳过")
                     continue
                 allow_test = self.apk_test_var.get()
-                result = install_android(device_id, self.latest_apk, allow_test)
-                self._log_threadsafe(f"Android {device_id} 执行命令: {' '.join(result.command)}")
+                install_process = start_android_install(device_id, self.latest_apk, allow_test)
+                self._active_process = install_process.process
+                self._log_threadsafe(f"Android {device_id} 执行命令: {' '.join(install_process.command)}")
+                returncode, stdout, stderr, canceled = self._wait_for_process(install_process.process)
                 self._log_threadsafe(
-                    f"Android {device_id} 安装结果: {result.process.returncode}\n"
-                    f"{result.process.stdout}\n{result.process.stderr}"
+                    f"Android {device_id} 安装结果: {returncode}\n{stdout}\n{stderr}"
                 )
+                if canceled:
+                    self._log_threadsafe("安装已中止")
+                    break
             else:
                 if not self.latest_hap:
                     self._log_threadsafe(f"{device_id}: 未找到 HAP，跳过")
                     continue
-                result = install_harmony(device_id, self.latest_hap)
-                self._log_threadsafe(f"Harmony {device_id} 执行命令: {' '.join(result.command)}")
+                install_process = start_harmony_install(device_id, self.latest_hap)
+                self._active_process = install_process.process
+                self._log_threadsafe(f"Harmony {device_id} 执行命令: {' '.join(install_process.command)}")
+                returncode, stdout, stderr, canceled = self._wait_for_process(install_process.process)
                 self._log_threadsafe(
-                    f"Harmony {device_id} 安装结果: {result.process.returncode}\n"
-                    f"{result.process.stdout}\n{result.process.stderr}"
+                    f"Harmony {device_id} 安装结果: {returncode}\n{stdout}\n{stderr}"
                 )
+                if canceled:
+                    self._log_threadsafe("安装已中止")
+                    break
+        self._active_process = None
         self.after(0, self._set_install_state, False)
+
+    def _wait_for_process(
+        self, process: subprocess.Popen
+    ) -> tuple[int, str, str, bool]:
+        canceled = False
+        while process.poll() is None:
+            if self._cancel_install_event.is_set():
+                canceled = True
+                self._terminate_process(process)
+                break
+            time.sleep(0.2)
+        stdout, stderr = process.communicate()
+        return process.returncode or 0, stdout or "", stderr or "", canceled
+
+    def _terminate_process(self, process: subprocess.Popen) -> None:
+        try:
+            process.terminate()
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=5)
 
 
 if __name__ == "__main__":

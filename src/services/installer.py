@@ -6,27 +6,27 @@ from typing import List
 
 
 @dataclass
-class InstallResult:
+class InstallProcess:
     command: List[str]
-    process: subprocess.CompletedProcess
+    process: subprocess.Popen
 
 
-def install_android(device_id: str, apk_path: Path, allow_test: bool) -> InstallResult:
+def start_android_install(device_id: str, apk_path: Path, allow_test: bool) -> InstallProcess:
     command: List[str] = ["adb", "-s", device_id, "install"]
     if allow_test:
         command.append("-t")
     command.append(str(apk_path))
-    run_kwargs = {"capture_output": True, "text": True, "check": False}
+    run_kwargs = {"stdout": subprocess.PIPE, "stderr": subprocess.PIPE, "text": True}
     if os.name == "nt":
         run_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
-    process = subprocess.run(command, **run_kwargs)
-    return InstallResult(command=command, process=process)
+    process = subprocess.Popen(command, **run_kwargs)
+    return InstallProcess(command=command, process=process)
 
 
-def install_harmony(device_id: str, hap_path: Path) -> InstallResult:
+def start_harmony_install(device_id: str, hap_path: Path) -> InstallProcess:
     command = ["hdc", "-t", device_id, "install", str(hap_path)]
-    run_kwargs = {"capture_output": True, "text": True, "check": False}
+    run_kwargs = {"stdout": subprocess.PIPE, "stderr": subprocess.PIPE, "text": True}
     if os.name == "nt":
         run_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
-    process = subprocess.run(command, **run_kwargs)
-    return InstallResult(command=command, process=process)
+    process = subprocess.Popen(command, **run_kwargs)
+    return InstallProcess(command=command, process=process)
