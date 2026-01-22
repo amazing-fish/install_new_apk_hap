@@ -413,10 +413,10 @@ class App(tk.Tk):
         self.after(0, self._set_install_state, False)
 
     def cancel_install(self) -> None:
-        if not self.active_installs:
-            self.log("当前没有进行中的安装")
-            return
         self.cancel_requested.set()
+        if not self.active_installs:
+            self.log("已请求中止安装，等待当前步骤结束")
+            return
         self.log("已请求中止安装，正在停止当前任务")
         for device_id, handle in list(self.active_installs.items()):
             if handle.process.poll() is None:
