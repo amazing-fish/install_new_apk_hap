@@ -8,7 +8,7 @@ from typing import Dict, List, Optional, Set
 
 from config_manager import ConfigManager
 from services.device_detector import DeviceInfo, detect_devices
-from services.installer import install_android, install_harmony
+from services.installer import InstallHandle, start_install_android, start_install_harmony
 from services.package_scanner import find_latest_packages
 
 
@@ -26,6 +26,8 @@ class App(tk.Tk):
         self.latest_hap: Optional[Path] = None
         self.apk_name_map: Dict[str, Path] = {}
         self.hap_name_map: Dict[str, Path] = {}
+        self.active_installs: Dict[str, InstallHandle] = {}
+        self.cancel_requested = threading.Event()
 
         self._build_ui()
         self.refresh_devices()
@@ -116,6 +118,10 @@ class App(tk.Tk):
             install_frame, text="安装到所选设备", command=self.install_to_selected
         )
         self.install_button.pack(side=tk.LEFT)
+        self.cancel_button = ttk.Button(
+            install_frame, text="中止下载", command=self.cancel_install, state=tk.DISABLED
+        )
+        self.cancel_button.pack(side=tk.LEFT, padx=6)
 
         log_frame = ttk.LabelFrame(container, text="日志")
         log_frame.pack(fill=tk.BOTH, expand=True, pady=8)
@@ -351,6 +357,10 @@ class App(tk.Tk):
     def _set_install_state(self, installing: bool) -> None:
         state = tk.DISABLED if installing else tk.NORMAL
         self.install_button.config(state=state)
+        self.cancel_button.config(state=tk.NORMAL if installing else tk.DISABLED)
+        if not installing:
+            self.cancel_requested.clear()
+            self.active_installs.clear()
 
     def _set_refresh_state(self, refreshing: bool) -> None:
         state = tk.DISABLED if refreshing else tk.NORMAL
@@ -364,7 +374,12 @@ class App(tk.Tk):
 
     def _install_worker(self, selection: List[str]) -> None:
         self._log_threadsafe(f"开始安装到所选设备: {', '.join(selection)}")
+        self.cancel_requested.clear()
+        self.active_installs.clear()
         for device_id in selection:
+            if self.cancel_requested.is_set():
+                self._log_threadsafe("检测到中止请求，停止后续安装")
+                break
             device = next((d for d in self.devices if d.device_id == device_id), None)
             if not device:
                 self._log_threadsafe(f"{device_id}: 设备信息未找到，跳过")
@@ -374,23 +389,39 @@ class App(tk.Tk):
                     self._log_threadsafe(f"{device_id}: 未找到 APK，跳过")
                     continue
                 allow_test = self.apk_test_var.get()
-                result = install_android(device_id, self.latest_apk, allow_test)
-                self._log_threadsafe(f"Android {device_id} 执行命令: {' '.join(result.command)}")
+                handle = start_install_android(device_id, self.latest_apk, allow_test)
+                self.active_installs[device_id] = handle
+                self._log_threadsafe(f"Android {device_id} 执行命令: {' '.join(handle.command)}")
+                stdout, stderr = handle.process.communicate()
+                returncode = handle.process.returncode
                 self._log_threadsafe(
-                    f"Android {device_id} 安装结果: {result.process.returncode}\n"
-                    f"{result.process.stdout}\n{result.process.stderr}"
+                    f"Android {device_id} 安装结果: {returncode}\n{stdout}\n{stderr}"
                 )
             else:
                 if not self.latest_hap:
                     self._log_threadsafe(f"{device_id}: 未找到 HAP，跳过")
                     continue
-                result = install_harmony(device_id, self.latest_hap)
-                self._log_threadsafe(f"Harmony {device_id} 执行命令: {' '.join(result.command)}")
+                handle = start_install_harmony(device_id, self.latest_hap)
+                self.active_installs[device_id] = handle
+                self._log_threadsafe(f"Harmony {device_id} 执行命令: {' '.join(handle.command)}")
+                stdout, stderr = handle.process.communicate()
+                returncode = handle.process.returncode
                 self._log_threadsafe(
-                    f"Harmony {device_id} 安装结果: {result.process.returncode}\n"
-                    f"{result.process.stdout}\n{result.process.stderr}"
+                    f"Harmony {device_id} 安装结果: {returncode}\n{stdout}\n{stderr}"
                 )
+            self.active_installs.pop(device_id, None)
         self.after(0, self._set_install_state, False)
+
+    def cancel_install(self) -> None:
+        if not self.active_installs:
+            self.log("当前没有进行中的安装")
+            return
+        self.cancel_requested.set()
+        self.log("已请求中止安装，正在停止当前任务")
+        for device_id, handle in list(self.active_installs.items()):
+            if handle.process.poll() is None:
+                handle.process.terminate()
+                self.log(f"{device_id}: 已发送中止信号")
 
 
 if __name__ == "__main__":
