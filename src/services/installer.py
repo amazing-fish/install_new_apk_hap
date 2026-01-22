@@ -27,10 +27,13 @@ def _run_install_command(command: List[str], stop_event: Optional[threading.Even
                 stdout, stderr = process.communicate()
             completed = subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
             return InstallResult(command=command, process=completed)
-        if process.poll() is not None:
-            stdout, stderr = process.communicate()
-            completed = subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
-            return InstallResult(command=command, process=completed)
+        try:
+            process.wait(timeout=0.2)
+        except subprocess.TimeoutExpired:
+            continue
+        stdout, stderr = process.communicate()
+        completed = subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+        return InstallResult(command=command, process=completed)
 
 
 def install_android(
