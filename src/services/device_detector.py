@@ -43,6 +43,8 @@ def detect_adb_devices() -> List[DeviceInfo]:
         if len(parts) < 2:
             continue
         device_id = parts[0]
+        if device_id.startswith("emulator-"):
+            continue
         status = parts[1]
         devices.append(DeviceInfo(device_id=device_id, platform="android", status=status))
     return devices
