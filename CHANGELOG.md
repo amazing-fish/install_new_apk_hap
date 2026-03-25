@@ -1,5 +1,9 @@
 # 变更记录
 
+## v0.3.0 - feature
+- 设备列表新增“获取 HDC UDID”按钮，针对 Harmony 设备执行 `hdc -t 设备序列号 shell bm get --udid`。
+- 获取成功后会弹窗展示 UDID，并自动复制到剪贴板，日志同步记录。
+
 ## v0.2.3 - bugfix
 - Android 设备探测时过滤 emulator-xxx，避免虚拟设备进入设备列表与刷新日志统计。
 

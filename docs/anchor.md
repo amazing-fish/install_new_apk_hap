@@ -15,6 +15,7 @@
 - **安装命令**：
   - Android：`adb -s <device_id> install [-t] <apk>`
   - Harmony：`hdc -t <device_id> install <hap>`
+- **UDID 获取**：设备列表按钮支持对 Harmony 设备执行 `hdc -t <device_id> shell bm get --udid`，结果弹窗展示并复制到剪贴板。
 - **Windows 运行**：调用 adb/hdc 时使用无控制台模式，避免弹窗闪现。
 - **配置文件**：`%APPDATA%/install_new_apk_hap/app_config.json`（Windows）
   - `device_names`：设备自定义命名

@@ -1,7 +1,7 @@
 import os
 import subprocess
 from dataclasses import dataclass
-from typing import List
+from typing import List, Optional
 
 
 @dataclass
@@ -70,3 +70,10 @@ def detect_hdc_devices() -> List[DeviceInfo]:
 
 def detect_devices() -> List[DeviceInfo]:
     return detect_adb_devices() + detect_hdc_devices()
+
+
+def get_hdc_device_udid(device_id: str) -> Optional[str]:
+    output = _run_command(["hdc", "-t", device_id, "shell", "bm", "get", "--udid"])
+    if not output:
+        return None
+    return output.splitlines()[-1].strip()
