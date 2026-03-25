@@ -7,7 +7,7 @@ from tkinter import filedialog, messagebox, ttk
 from typing import Dict, List, Optional, Set
 
 from config_manager import ConfigManager
-from services.device_detector import DeviceInfo, detect_devices
+from services.device_detector import DeviceInfo, detect_devices, get_hdc_device_udid
 from services.installer import install_android, install_harmony
 from services.package_scanner import find_latest_packages
 
@@ -29,6 +29,7 @@ class App(tk.Tk):
         self.installing = False
         self.install_stop_event = threading.Event()
         self.install_status_var = tk.StringVar(value="就绪")
+        self.udid_fetching = False
 
         self._build_ui()
         self.refresh_devices()
@@ -69,6 +70,8 @@ class App(tk.Tk):
 
         self.refresh_button = ttk.Button(button_frame, text="刷新设备", command=self.refresh_devices)
         self.refresh_button.pack(side=tk.LEFT)
+        self.udid_button = ttk.Button(button_frame, text="获取UDID", command=self.fetch_hdc_udid)
+        self.udid_button.pack(side=tk.LEFT, padx=6)
 
         name_frame = ttk.Frame(container)
         name_frame.pack(fill=tk.X, pady=8)
@@ -211,6 +214,48 @@ class App(tk.Tk):
         device_id = selection[0]
         current_name = self.device_tree.set(device_id, "name")
         self.name_var.set(current_name)
+
+    def fetch_hdc_udid(self) -> None:
+        if self.udid_fetching:
+            self.log("获取 UDID 中：请稍候")
+            return
+        selection = self.device_tree.selection()
+        if len(selection) != 1:
+            messagebox.showwarning("提示", "请选择一个 Harmony 设备")
+            self.log("获取 UDID 失败：请选择一个 Harmony 设备")
+            return
+        device_id = selection[0]
+        device = next((d for d in self.devices if d.device_id == device_id), None)
+        if not device:
+            messagebox.showwarning("提示", "设备信息不存在，请先刷新设备")
+            self.log(f"获取 UDID 失败：设备 {device_id} 信息不存在")
+            return
+        if device.platform == "android":
+            messagebox.showwarning("提示", "仅支持NEXT")
+            self.log(f"获取 UDID 失败：设备 {device_id} 为 Android，仅支持 NEXT")
+            return
+        if device.platform != "harmony":
+            messagebox.showwarning("提示", "仅支持 NEXT 设备获取 UDID")
+            self.log(f"获取 UDID 失败：设备 {device_id} 平台不支持")
+            return
+        self._set_udid_fetch_state(True)
+        self.log(f"开始获取设备 UDID: {device_id}")
+        threading.Thread(target=self._fetch_hdc_udid_worker, args=(device_id,), daemon=True).start()
+
+    def _fetch_hdc_udid_worker(self, device_id: str) -> None:
+        udid = get_hdc_device_udid(device_id)
+        self.after(0, self._apply_hdc_udid_result, device_id, udid)
+
+    def _apply_hdc_udid_result(self, device_id: str, udid: Optional[str]) -> None:
+        self._set_udid_fetch_state(False)
+        if not udid:
+            messagebox.showwarning("提示", f"未获取到设备 {device_id} 的 UDID")
+            self.log(f"获取 UDID 失败：设备 {device_id} 未返回 UDID")
+            return
+        self.clipboard_clear()
+        self.clipboard_append(udid)
+        self.log(f"已获取设备 UDID（已复制到剪贴板）: {device_id} -> {udid}")
+        messagebox.showinfo("UDID", f"设备 {device_id} 的 UDID：\n{udid}\n\n已复制到剪贴板")
 
     def save_device_name(self) -> None:
         selection = self.device_tree.selection()
@@ -373,6 +418,11 @@ class App(tk.Tk):
     def _set_refresh_state(self, refreshing: bool) -> None:
         state = tk.DISABLED if refreshing else tk.NORMAL
         self.refresh_button.config(state=state)
+
+    def _set_udid_fetch_state(self, fetching: bool) -> None:
+        self.udid_fetching = fetching
+        state = tk.DISABLED if fetching else tk.NORMAL
+        self.udid_button.config(state=state)
 
     def _log_threadsafe(self, message: str) -> None:
         if threading.current_thread() is threading.main_thread():

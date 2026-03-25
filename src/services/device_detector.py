@@ -1,7 +1,7 @@
 import os
 import subprocess
 from dataclasses import dataclass
-from typing import List
+from typing import List, Optional
 
 
 @dataclass
@@ -70,3 +70,29 @@ def detect_hdc_devices() -> List[DeviceInfo]:
 
 def detect_devices() -> List[DeviceInfo]:
     return detect_adb_devices() + detect_hdc_devices()
+
+
+def get_hdc_device_udid(device_id: str) -> Optional[str]:
+    run_kwargs = {
+        "check": False,
+        "capture_output": True,
+        "text": True,
+    }
+    if os.name == "nt":
+        run_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+    try:
+        result = subprocess.run(
+            ["hdc", "-t", device_id, "shell", "bm", "get", "--udid"],
+            **run_kwargs,
+        )
+    except FileNotFoundError:
+        return None
+    if result.returncode != 0:
+        return None
+    output = result.stdout.strip()
+    if not output:
+        return None
+    lines = [line.strip() for line in output.splitlines() if line.strip()]
+    if not lines:
+        return None
+    return lines[-1]

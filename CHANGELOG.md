@@ -1,5 +1,20 @@
 # 变更记录
 
+## v0.3.3 - bugfix
+- 获取 UDID 时增加 `hdc` 返回码校验：仅当命令成功（exit code = 0）且输出有效时才认定为成功，避免将错误文本当作 UDID 展示与复制。
+
+## v0.3.2 - bugfix
+- 获取UDID改为后台线程执行，避免 `hdc` 响应慢时阻塞 Tk 主线程导致界面卡死。
+- 获取UDID过程中按钮会临时禁用并提示“获取 UDID 中：请稍候”，完成后恢复。
+
+## v0.3.1 - bugfix
+- 设备操作按钮文案由“获取 HDC UDID”调整为“获取UDID”。
+- 选中 Android 设备获取 UDID 时提示“仅支持NEXT”，明确仅支持 NEXT（Harmony）设备。
+
+## v0.3.0 - feature
+- 设备列表新增“获取 HDC UDID”按钮，针对 Harmony 设备执行 `hdc -t 设备序列号 shell bm get --udid`。
+- 获取成功后会弹窗展示 UDID，并自动复制到剪贴板，日志同步记录。
+
 ## v0.2.3 - bugfix
 - Android 设备探测时过滤 emulator-xxx，避免虚拟设备进入设备列表与刷新日志统计。
 
