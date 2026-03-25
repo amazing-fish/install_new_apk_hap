@@ -15,7 +15,7 @@
 - **安装命令**：
   - Android：`adb -s <device_id> install [-t] <apk>`
   - Harmony：`hdc -t <device_id> install <hap>`
-- **UDID 获取**：设备列表“获取UDID”按钮支持对 NEXT（Harmony）设备执行 `hdc -t <device_id> shell bm get --udid`，结果弹窗展示并复制到剪贴板；Android 设备会提示仅支持 NEXT。
+- **UDID 获取**：设备列表“获取UDID”按钮支持对 NEXT（Harmony）设备执行 `hdc -t <device_id> shell bm get --udid`；仅在命令返回成功且输出有效时才展示并复制 UDID，Android 设备会提示仅支持 NEXT。
 - **Windows 运行**：调用 adb/hdc 时使用无控制台模式，避免弹窗闪现。
 - **配置文件**：`%APPDATA%/install_new_apk_hap/app_config.json`（Windows）
   - `device_names`：设备自定义命名
