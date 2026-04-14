@@ -7,6 +7,8 @@
 - 扫描指定目录最新 apk/hap
 - 支持 apk `-t` 安装规则记忆
 - 设备自定义命名
+- Harmony 最近 7 天崩溃日志 zip 打包
+- NEXTdemo 日志（`haps/entry/files/log-ads`）zip 打包
 - 可视化界面
 
 ## 使用方式

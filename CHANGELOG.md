@@ -1,5 +1,10 @@
 # 变更记录
 
+## v0.4.1 - feature
+- 设备列表“获取崩溃日志”改为 Harmony 场景：拉取 `/data/log/faultlog/faultlogger` 后筛选最近 7 天 crash 文件并打包 zip。
+- 新增“获取NEXTdemo日志”按钮：匹配相对路径 `haps/entry/files/log-ads`，批量拉取并打包 zip。
+- 日志打包路径统一：Windows 输出到 `D:\`，非 Windows 输出到 `~/install_new_apk_hap_logs`。
+
 ## v0.4.0 - feature
 - 设备列表新增“获取崩溃日志”按钮，支持对 Android 设备执行 `adb -s <device_id> shell dumpsys dropbox --print`。
 - 崩溃日志获取成功后会将输出内容追加写入 `D:\crash.log`，并在日志区记录执行命令与结果。
