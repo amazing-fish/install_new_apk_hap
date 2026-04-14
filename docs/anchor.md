@@ -16,7 +16,9 @@
   - Android：`adb -s <device_id> install [-t] <apk>`
   - Harmony：`hdc -t <device_id> install <hap>`
 - **UDID 获取**：设备列表“获取UDID”按钮支持对 NEXT（Harmony）设备执行 `hdc -t <device_id> shell bm get --udid`；仅在命令返回成功且输出有效时才展示并复制 UDID，Android 设备会提示仅支持 NEXT。
-- **崩溃日志采集**：设备列表“获取崩溃日志”按钮支持对 Android 设备执行 `adb -s <device_id> shell dumpsys dropbox --print`，并将输出追加写入 `D:\crash.log`。
+- **Harmony 崩溃日志采集**：设备列表“获取崩溃日志”按钮支持对 Harmony 设备拉取 `/data/log/faultlog/faultlogger`，筛选最近 7 天含 `crash` 关键字的文件并打包为 zip。
+- **NEXTdemo 日志采集**：设备列表新增“获取NEXTdemo日志”按钮，按相对路径 `haps/entry/files/log-ads` 在 `/data/app` 下匹配目录并打包为 zip。
+- **日志输出目录**：Windows 默认输出到 `D:\`；非 Windows 输出到 `~/install_new_apk_hap_logs`。
 - **Windows 运行**：调用 adb/hdc 时使用无控制台模式，避免弹窗闪现。
 - **配置文件**：`%APPDATA%/install_new_apk_hap/app_config.json`（Windows）
   - `device_names`：设备自定义命名
