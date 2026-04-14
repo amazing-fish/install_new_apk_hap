@@ -1,5 +1,9 @@
 # 变更记录
 
+## v0.4.0 - feature
+- 设备列表新增“获取崩溃日志”按钮，支持对 Android 设备执行 `adb -s <device_id> shell dumpsys dropbox --print`。
+- 崩溃日志获取成功后会将输出内容追加写入 `D:\crash.log`，并在日志区记录执行命令与结果。
+
 ## v0.3.3 - bugfix
 - 获取 UDID 时增加 `hdc` 返回码校验：仅当命令成功（exit code = 0）且输出有效时才认定为成功，避免将错误文本当作 UDID 展示与复制。
 

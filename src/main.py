@@ -8,7 +8,7 @@ from typing import Dict, List, Optional, Set
 
 from config_manager import ConfigManager
 from services.device_detector import DeviceInfo, detect_devices, get_hdc_device_udid
-from services.installer import install_android, install_harmony
+from services.installer import install_android, install_harmony, run_android_dropbox_dump
 from services.package_scanner import find_latest_packages
 
 
@@ -30,6 +30,7 @@ class App(tk.Tk):
         self.install_stop_event = threading.Event()
         self.install_status_var = tk.StringVar(value="就绪")
         self.udid_fetching = False
+        self.crash_log_fetching = False
 
         self._build_ui()
         self.refresh_devices()
@@ -72,6 +73,8 @@ class App(tk.Tk):
         self.refresh_button.pack(side=tk.LEFT)
         self.udid_button = ttk.Button(button_frame, text="获取UDID", command=self.fetch_hdc_udid)
         self.udid_button.pack(side=tk.LEFT, padx=6)
+        self.crash_log_button = ttk.Button(button_frame, text="获取崩溃日志", command=self.fetch_android_crash_log)
+        self.crash_log_button.pack(side=tk.LEFT)
 
         name_frame = ttk.Frame(container)
         name_frame.pack(fill=tk.X, pady=8)
@@ -424,11 +427,73 @@ class App(tk.Tk):
         state = tk.DISABLED if fetching else tk.NORMAL
         self.udid_button.config(state=state)
 
+    def _set_crash_log_fetch_state(self, fetching: bool) -> None:
+        self.crash_log_fetching = fetching
+        state = tk.DISABLED if fetching else tk.NORMAL
+        self.crash_log_button.config(state=state)
+
     def _log_threadsafe(self, message: str) -> None:
         if threading.current_thread() is threading.main_thread():
             self.log(message)
         else:
             self.after(0, self.log, message)
+
+    def fetch_android_crash_log(self) -> None:
+        if self.crash_log_fetching:
+            self.log("获取崩溃日志中：请稍候")
+            return
+        selection = self.device_tree.selection()
+        if len(selection) != 1:
+            messagebox.showwarning("提示", "请选择一个 Android 设备")
+            self.log("获取崩溃日志失败：请选择一个 Android 设备")
+            return
+        device_id = selection[0]
+        device = next((d for d in self.devices if d.device_id == device_id), None)
+        if not device:
+            messagebox.showwarning("提示", "设备信息不存在，请先刷新设备")
+            self.log(f"获取崩溃日志失败：设备 {device_id} 信息不存在")
+            return
+        if device.platform != "android":
+            messagebox.showwarning("提示", "仅支持 Android 设备")
+            self.log(f"获取崩溃日志失败：设备 {device_id} 非 Android")
+            return
+        log_path = Path(r"D:\crash.log")
+        self._set_crash_log_fetch_state(True)
+        self.log(f"开始获取 Android 崩溃日志: {device_id} -> {log_path}")
+        threading.Thread(
+            target=self._fetch_android_crash_log_worker,
+            args=(device_id, log_path),
+            daemon=True,
+        ).start()
+
+    def _fetch_android_crash_log_worker(self, device_id: str, log_path: Path) -> None:
+        result = run_android_dropbox_dump(device_id, log_path)
+        self.after(
+            0,
+            self._apply_android_crash_log_result,
+            device_id,
+            log_path,
+            result.command,
+            result.process.returncode,
+            result.process.stderr,
+        )
+
+    def _apply_android_crash_log_result(
+        self,
+        device_id: str,
+        log_path: Path,
+        command: List[str],
+        returncode: int,
+        stderr: str,
+    ) -> None:
+        self._set_crash_log_fetch_state(False)
+        self.log(f"Android {device_id} 崩溃日志命令: {' '.join(command)}")
+        if returncode != 0:
+            messagebox.showwarning("提示", f"获取崩溃日志失败，设备 {device_id} 返回码: {returncode}")
+            self.log(f"获取崩溃日志失败：设备 {device_id} 返回码 {returncode}\n{stderr}")
+            return
+        messagebox.showinfo("提示", f"已写入崩溃日志：{log_path}")
+        self.log(f"获取崩溃日志成功：设备 {device_id}，输出已追加到 {log_path}")
 
     def _install_worker(self, selection: List[str]) -> None:
         self._log_threadsafe(f"开始安装到所选设备: {', '.join(selection)}")

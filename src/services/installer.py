@@ -12,6 +12,12 @@ class InstallResult:
     process: subprocess.CompletedProcess
 
 
+@dataclass
+class CommandResult:
+    command: List[str]
+    process: subprocess.CompletedProcess
+
+
 def _run_install_command(command: List[str], stop_event: Optional[threading.Event]) -> InstallResult:
     run_kwargs = {"stdout": subprocess.PIPE, "stderr": subprocess.PIPE, "text": True}
     if os.name == "nt":
@@ -34,6 +40,21 @@ def _run_install_command(command: List[str], stop_event: Optional[threading.Even
         stdout, stderr = process.communicate()
         completed = subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
         return InstallResult(command=command, process=completed)
+
+
+def run_android_dropbox_dump(device_id: str, log_path: Path) -> CommandResult:
+    command = ["adb", "-s", device_id, "shell", "dumpsys", "dropbox", "--print"]
+    run_kwargs = {"stdout": subprocess.PIPE, "stderr": subprocess.PIPE, "text": True}
+    if os.name == "nt":
+        run_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+    process = subprocess.run(command, **run_kwargs)
+    if process.returncode == 0 and process.stdout:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_path.open("a", encoding="utf-8", newline="\n") as log_file:
+            log_file.write(process.stdout)
+            if not process.stdout.endswith("\n"):
+                log_file.write("\n")
+    return CommandResult(command=command, process=process)
 
 
 def install_android(
