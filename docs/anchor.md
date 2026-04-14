@@ -16,6 +16,7 @@
   - Android：`adb -s <device_id> install [-t] <apk>`
   - Harmony：`hdc -t <device_id> install <hap>`
 - **UDID 获取**：设备列表“获取UDID”按钮支持对 NEXT（Harmony）设备执行 `hdc -t <device_id> shell bm get --udid`；仅在命令返回成功且输出有效时才展示并复制 UDID，Android 设备会提示仅支持 NEXT。
+- **崩溃日志采集**：设备列表“获取崩溃日志”按钮支持对 Android 设备执行 `adb -s <device_id> shell dumpsys dropbox --print`，并将输出追加写入 `D:\crash.log`。
 - **Windows 运行**：调用 adb/hdc 时使用无控制台模式，避免弹窗闪现。
 - **配置文件**：`%APPDATA%/install_new_apk_hap/app_config.json`（Windows）
   - `device_names`：设备自定义命名
@@ -40,3 +41,4 @@
 ## 修改日志稳定要求
 - 只允许在 `CHANGELOG.md` 中追加版本条目，不修改历史条目。
 - 重大重构或行为变更必须同步更新本 Anchor 文档。
+- 新功能开发时必须在本 Anchor 文档同步记录技术路径变化，防止实现与修改日志漂移。
