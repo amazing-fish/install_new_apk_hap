@@ -1,5 +1,8 @@
 # 变更记录
 
+## v0.4.2 - feature
+- 刷新设备列表时识别相对上次新增的设备，将新增设备置顶并以浅绿色高亮，同时在日志区记录新增设备码。
+
 ## v0.4.1 - feature
 - 设备列表“获取崩溃日志”改为 Harmony 场景：拉取 `/data/log/faultlog/faultlogger` 后筛选最近 7 天 crash 文件并打包 zip。
 - 新增“获取NEXTdemo日志”按钮：匹配相对路径 `haps/entry/files/log-ads`，批量拉取并打包 zip。
