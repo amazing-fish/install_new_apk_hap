@@ -4,7 +4,7 @@ import tkinter as tk
 from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Tuple
 
 from config_manager import ConfigManager
 from services.device_detector import DeviceInfo, detect_devices, get_hdc_device_udid
@@ -15,6 +15,16 @@ from services.installer import (
     run_harmony_recent_crash_zip,
 )
 from services.package_scanner import find_latest_packages
+
+
+def reorder_devices_for_refresh(
+    devices: List[DeviceInfo],
+    previous_device_ids: Set[str],
+) -> Tuple[List[DeviceInfo], Set[str]]:
+    new_device_ids = {device.device_id for device in devices} - previous_device_ids
+    new_devices = [device for device in devices if device.device_id in new_device_ids]
+    existing_devices = [device for device in devices if device.device_id not in new_device_ids]
+    return new_devices + existing_devices, new_device_ids
 
 
 class App(tk.Tk):
@@ -36,6 +46,7 @@ class App(tk.Tk):
         self.install_status_var = tk.StringVar(value="就绪")
         self.udid_fetching = False
         self.crash_log_fetching = False
+        self.device_ids_before_last_refresh: Optional[Set[str]] = None
 
         self._build_ui()
         self.refresh_devices()
@@ -64,6 +75,7 @@ class App(tk.Tk):
         self.device_tree.column("name", width=100)
         self.device_tree.column("status", width=120)
         self.device_tree.column("platform", width=120)
+        self.device_tree.tag_configure("new_device", background="#DFF6DD")
         self.device_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         self.device_tree.bind("<<TreeviewSelect>>", self.on_device_select)
 
@@ -185,7 +197,17 @@ class App(tk.Tk):
         self.after(0, self._apply_device_refresh, devices)
 
     def _apply_device_refresh(self, devices: List[DeviceInfo]) -> None:
-        self.devices = devices
+        current_device_ids = {device.device_id for device in devices}
+        if self.device_ids_before_last_refresh is None:
+            ordered_devices = devices
+            new_device_ids: Set[str] = set()
+        else:
+            ordered_devices, new_device_ids = reorder_devices_for_refresh(
+                devices,
+                self.device_ids_before_last_refresh,
+            )
+        self.device_ids_before_last_refresh = current_device_ids
+        self.devices = ordered_devices
         self.device_tree.delete(*self.device_tree.get_children())
         self._update_device_tree_height()
         name_mapping: Dict[str, str] = self.config_manager.data.get("device_names", {})
@@ -197,6 +219,7 @@ class App(tk.Tk):
                 tk.END,
                 iid=device.device_id,
                 values=(device.device_id, name, device.status, device.platform),
+                tags=("new_device",) if device.device_id in new_device_ids else (),
             )
             if len(self.devices) == 1:
                 only_device_id = device.device_id
@@ -214,6 +237,9 @@ class App(tk.Tk):
                 "设备列表已刷新："
                 f"Android {android_count} 台, Harmony {harmony_count} 台, 总计 {total_count} 台"
             )
+            if new_device_ids:
+                new_device_text = "，".join(sorted(new_device_ids))
+                self.log(f"新增设备已置顶高亮: {new_device_text}")
         self._set_refresh_state(False)
 
     def _update_device_tree_height(self) -> None:
