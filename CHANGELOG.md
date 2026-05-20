@@ -1,5 +1,8 @@
 # 变更记录
 
+## v0.4.3 - bugfix
+- 修复 PR #24 覆盖 Android 崩溃日志入口的问题：“获取崩溃日志”会根据选中设备平台自动分发，Android 走 `adb dumpsys dropbox`，Harmony 走 `hdc faultlogger` 打包。
+
 ## v0.4.2 - feature
 - 刷新设备列表时识别相对上次新增的设备，将新增设备置顶并以浅绿色高亮，同时在日志区记录新增设备码。
 
