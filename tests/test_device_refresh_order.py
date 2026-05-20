@@ -28,3 +28,21 @@ def test_reorder_devices_for_refresh_moves_new_devices_to_top() -> None:
         "old-harmony",
     ]
     assert new_ids == {"new-harmony", "new-android"}
+
+
+def test_build_crash_log_target_dispatches_by_device_platform() -> None:
+    output_dir = Path("D:/")
+
+    android_target = main.build_crash_log_target(
+        DeviceInfo(device_id="android-device", platform="android", status="device"),
+        output_dir,
+    )
+    harmony_target = main.build_crash_log_target(
+        DeviceInfo(device_id="harmony-device", platform="harmony", status="device"),
+        output_dir,
+    )
+
+    assert android_target.platform == "android"
+    assert android_target.output_path == output_dir / "crash.log"
+    assert harmony_target.platform == "harmony"
+    assert harmony_target.output_path == output_dir

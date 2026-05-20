@@ -1,6 +1,7 @@
 import os
 import threading
 import tkinter as tk
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
@@ -11,10 +12,17 @@ from services.device_detector import DeviceInfo, detect_devices, get_hdc_device_
 from services.installer import (
     install_android,
     install_harmony,
+    run_android_dropbox_dump,
     run_harmony_nextdemo_log_zip,
     run_harmony_recent_crash_zip,
 )
 from services.package_scanner import find_latest_packages
+
+
+@dataclass(frozen=True)
+class CrashLogTarget:
+    platform: str
+    output_path: Path
 
 
 def reorder_devices_for_refresh(
@@ -25,6 +33,14 @@ def reorder_devices_for_refresh(
     new_devices = [device for device in devices if device.device_id in new_device_ids]
     existing_devices = [device for device in devices if device.device_id not in new_device_ids]
     return new_devices + existing_devices, new_device_ids
+
+
+def build_crash_log_target(device: DeviceInfo, output_dir: Path) -> CrashLogTarget:
+    if device.platform == "android":
+        return CrashLogTarget(platform="android", output_path=output_dir / "crash.log")
+    if device.platform == "harmony":
+        return CrashLogTarget(platform="harmony", output_path=output_dir)
+    raise ValueError(f"unsupported device platform: {device.platform}")
 
 
 class App(tk.Tk):
@@ -90,7 +106,7 @@ class App(tk.Tk):
         self.refresh_button.pack(side=tk.LEFT)
         self.udid_button = ttk.Button(button_frame, text="获取UDID", command=self.fetch_hdc_udid)
         self.udid_button.pack(side=tk.LEFT, padx=6)
-        self.crash_log_button = ttk.Button(button_frame, text="获取崩溃日志", command=self.fetch_android_crash_log)
+        self.crash_log_button = ttk.Button(button_frame, text="获取崩溃日志", command=self.fetch_crash_log)
         self.crash_log_button.pack(side=tk.LEFT)
         self.nextdemo_log_button = ttk.Button(
             button_frame,
@@ -481,14 +497,14 @@ class App(tk.Tk):
         else:
             self.after(0, self.log, message)
 
-    def fetch_android_crash_log(self) -> None:
+    def fetch_crash_log(self) -> None:
         if self.crash_log_fetching:
             self.log("获取崩溃日志中：请稍候")
             return
         selection = self.device_tree.selection()
         if len(selection) != 1:
-            messagebox.showwarning("提示", "请选择一个 Harmony 设备")
-            self.log("获取崩溃日志失败：请选择一个 Harmony 设备")
+            messagebox.showwarning("提示", "请选择一个设备")
+            self.log("获取崩溃日志失败：请选择一个设备")
             return
         device_id = selection[0]
         device = next((d for d in self.devices if d.device_id == device_id), None)
@@ -496,18 +512,56 @@ class App(tk.Tk):
             messagebox.showwarning("提示", "设备信息不存在，请先刷新设备")
             self.log(f"获取崩溃日志失败：设备 {device_id} 信息不存在")
             return
-        if device.platform != "harmony":
-            messagebox.showwarning("提示", "仅支持 Harmony 设备")
-            self.log(f"获取崩溃日志失败：设备 {device_id} 非 Harmony")
+        try:
+            target = build_crash_log_target(device, self._get_log_output_dir())
+        except ValueError:
+            messagebox.showwarning("提示", "仅支持 Android 或 Harmony 设备")
+            self.log(f"获取崩溃日志失败：设备 {device_id} 平台不支持")
             return
-        output_dir = self._get_log_output_dir()
         self._set_crash_log_fetch_state(True)
-        self.log(f"开始获取 Harmony 最近 7 天崩溃日志: {device_id} -> {output_dir}")
+        if target.platform == "android":
+            self.log(f"开始获取 Android 崩溃日志: {device_id} -> {target.output_path}")
+            threading.Thread(
+                target=self._fetch_android_crash_log_worker,
+                args=(device_id, target.output_path),
+                daemon=True,
+            ).start()
+            return
+        self.log(f"开始获取 Harmony 最近 7 天崩溃日志: {device_id} -> {target.output_path}")
         threading.Thread(
             target=self._fetch_harmony_crash_log_worker,
-            args=(device_id, output_dir),
+            args=(device_id, target.output_path),
             daemon=True,
         ).start()
+
+    def _fetch_android_crash_log_worker(self, device_id: str, log_path: Path) -> None:
+        result = run_android_dropbox_dump(device_id, log_path)
+        self.after(
+            0,
+            self._apply_android_crash_log_result,
+            device_id,
+            log_path,
+            result.command,
+            result.process.returncode,
+            result.process.stderr,
+        )
+
+    def _apply_android_crash_log_result(
+        self,
+        device_id: str,
+        log_path: Path,
+        command: List[str],
+        returncode: int,
+        stderr: str,
+    ) -> None:
+        self._set_crash_log_fetch_state(False)
+        self.log(f"Android {device_id} 崩溃日志命令: {' '.join(command)}")
+        if returncode != 0:
+            messagebox.showwarning("提示", f"获取崩溃日志失败，设备 {device_id} 返回码: {returncode}")
+            self.log(f"获取崩溃日志失败：设备 {device_id} 返回码 {returncode}\n{stderr}")
+            return
+        messagebox.showinfo("提示", f"已写入崩溃日志：{log_path}")
+        self.log(f"获取崩溃日志成功：设备 {device_id}，输出已追加到 {log_path}")
 
     def _fetch_harmony_crash_log_worker(self, device_id: str, output_dir: Path) -> None:
         result = run_harmony_recent_crash_zip(device_id, output_dir, days=7)
