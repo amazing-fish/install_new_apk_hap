@@ -1,5 +1,9 @@
 # 变更记录
 
+## v0.5.0 - feature
+- 新增安装包应用名称展示：扫描后在“安装到所选设备”按钮上方一行展示 APK/HAP 应用名称。
+- 安装包下拉框展示从“仅文件名”升级为“应用名称（文件名）”，解析失败自动回退文件名。
+
 ## v0.4.3 - bugfix
 - 修复 PR #24 覆盖 Android 崩溃日志入口的问题：“获取崩溃日志”会根据选中设备平台自动分发，Android 走 `adb dumpsys dropbox`，Harmony 走 `hdc faultlogger` 打包。
 
