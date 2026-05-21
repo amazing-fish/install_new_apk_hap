@@ -2,7 +2,7 @@ from dataclasses import dataclass
 import json
 from pathlib import Path
 import re
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 import zipfile
 
 
@@ -57,6 +57,24 @@ def _extract_json5_string_value(content: str, key: str) -> Optional[str]:
     return _safe_text(match.group(1))
 
 
+def _find_nested_value(data: Any, keys: Tuple[str, ...]) -> Optional[str]:
+    if isinstance(data, dict):
+        for key in keys:
+            parsed = _safe_text(data.get(key))
+            if parsed:
+                return parsed
+        for value in data.values():
+            parsed = _find_nested_value(value, keys)
+            if parsed:
+                return parsed
+    if isinstance(data, list):
+        for item in data:
+            parsed = _find_nested_value(item, keys)
+            if parsed:
+                return parsed
+    return None
+
+
 def _parse_hap_app_name(hap_path: Path) -> Optional[str]:
     try:
         with zipfile.ZipFile(hap_path, "r") as zip_file:
@@ -72,10 +90,9 @@ def _parse_hap_app_name(hap_path: Path) -> Optional[str]:
                             return parsed
                     continue
                 data = json.loads(content)
-                for key in ("label", "appName", "name"):
-                    parsed = _safe_text(data.get(key))
-                    if parsed:
-                        return parsed
+                parsed = _find_nested_value(data, ("label", "appName", "name"))
+                if parsed:
+                    return parsed
     except Exception:
         return None
     return None

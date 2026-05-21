@@ -1,5 +1,8 @@
 # 变更记录
 
+## v0.5.2 - bugfix
+- 修复 HAP JSON 元数据仅按顶层 key 解析导致的应用名丢失问题：`module.json/pack.info` 现支持递归遍历对象与数组，兼容 `module.name` 等嵌套结构，避免错误回退到文件名。
+
 ## v0.5.1 - bugfix
 - 修复仅包含 `module.json5` 的 HAP 应用名解析错误：改为按 `key: "value"` 提取冒号后的字符串，避免出现 `label\": \"My App` 这类异常展示文本。
 
