@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 import json
 from pathlib import Path
+import re
 from typing import List, Optional, Tuple
 import zipfile
 
@@ -48,6 +49,14 @@ def _parse_apk_app_name(apk_path: Path) -> Optional[str]:
     return None
 
 
+def _extract_json5_string_value(content: str, key: str) -> Optional[str]:
+    pattern = re.compile(rf'"{re.escape(key)}"\s*:\s*"([^"]+)"')
+    match = pattern.search(content)
+    if not match:
+        return None
+    return _safe_text(match.group(1))
+
+
 def _parse_hap_app_name(hap_path: Path) -> Optional[str]:
     try:
         with zipfile.ZipFile(hap_path, "r") as zip_file:
@@ -56,15 +65,11 @@ def _parse_hap_app_name(hap_path: Path) -> Optional[str]:
                     continue
                 content = zip_file.read(name).decode("utf-8", errors="ignore")
                 if name.endswith(".json5"):
-                    # 轻量兼容：尽力抽取 label/name 关键字段，不做完整 json5 解析
-                    for line in content.splitlines():
-                        if "label" in line or "name" in line:
-                            quote_start = line.find('"')
-                            quote_end = line.rfind('"')
-                            if quote_start >= 0 and quote_end > quote_start:
-                                parsed = _safe_text(line[quote_start + 1:quote_end])
-                                if parsed:
-                                    return parsed
+                    # 轻量兼容：抽取 key 冒号后侧字符串值，避免把 key 片段错误拼入结果
+                    for key in ("label", "appName", "name"):
+                        parsed = _extract_json5_string_value(content, key)
+                        if parsed:
+                            return parsed
                     continue
                 data = json.loads(content)
                 for key in ("label", "appName", "name"):
