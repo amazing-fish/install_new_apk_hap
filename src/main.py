@@ -419,18 +419,42 @@ class App(tk.Tk):
             self.log("安装失败：未找到可安装的 APK/HAP")
             return
         previous_selection = set(self.device_tree.selection())
+        selected_apk = self.latest_apk
+        selected_hap = self.latest_hap
+        allow_test = self.apk_test_var.get()
         self._set_install_state(True)
         threading.Thread(
             target=self._prepare_install_worker,
-            args=(previous_selection,),
+            args=(previous_selection, selected_apk, selected_hap, allow_test),
             daemon=True,
         ).start()
 
-    def _prepare_install_worker(self, previous_selection: Set[str]) -> None:
+    def _prepare_install_worker(
+        self,
+        previous_selection: Set[str],
+        selected_apk: Optional[Path],
+        selected_hap: Optional[Path],
+        allow_test: bool,
+    ) -> None:
         devices = detect_devices()
-        self.after(0, self._finalize_install, devices, previous_selection)
+        self.after(
+            0,
+            self._finalize_install,
+            devices,
+            previous_selection,
+            selected_apk,
+            selected_hap,
+            allow_test,
+        )
 
-    def _finalize_install(self, devices: List[DeviceInfo], previous_selection: Set[str]) -> None:
+    def _finalize_install(
+        self,
+        devices: List[DeviceInfo],
+        previous_selection: Set[str],
+        selected_apk: Optional[Path],
+        selected_hap: Optional[Path],
+        allow_test: bool,
+    ) -> None:
         self._apply_device_refresh(devices)
         current_device_ids = {device.device_id for device in self.devices}
         missing_devices = previous_selection - current_device_ids
@@ -452,9 +476,6 @@ class App(tk.Tk):
                 self.install_status_var.set("就绪")
                 self._set_install_state(False)
                 return
-        selected_apk = self.latest_apk
-        selected_hap = self.latest_hap
-        allow_test = self.apk_test_var.get()
         threading.Thread(
             target=self._install_worker,
             args=(selection_list, selected_apk, selected_hap, allow_test),
