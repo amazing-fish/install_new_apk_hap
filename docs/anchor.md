@@ -31,6 +31,15 @@
   - **生成规则**：首次运行自动创建；exe 运行后在 AppData 目录生成/更新
 - **自动化打包**：GitHub Actions 在 Windows 环境使用 PyInstaller 生成 exe，可手动触发或打 tag；tag 触发时会将 exe 上传到 release assets。
 
+
+## 代码分析基线（2026-05-28）
+- **入口与状态管理**：`App` 负责 UI 组件装配与交互编排，安装状态、刷新状态、UDID/日志抓取状态通过实例字段统一管理。
+- **并发模型**：设备刷新、安装执行、UDID 获取、日志抓取均通过后台线程 + `after` 回主线程更新 UI，避免 Tk 跨线程直接写控件。
+- **安装链路一致性**：安装命令由 `services/installer.py` 统一封装，Android/Harmony 分流执行；支持中止事件轮询，并在 Windows 下使用 `CREATE_NO_WINDOW`。
+- **设备探测与过滤**：`device_detector` 对 `adb devices -l` 与 `hdc list targets` 做最小解析，明确过滤 Android 模拟器与 Harmony 空列表占位。
+- **包扫描策略**：`package_scanner` 以文件修改时间排序，返回“最新项 + 最近 5 个候选”，满足默认安装与回退选择。
+- **配置持久化**：`config_manager` 以 JSON 持久化 `device_names`、`last_scan_dir`、`apk_needs_t`，首次运行自动落盘默认配置。
+
 ## 目录结构与职责
 - `src/main.py`：UI 与交互入口
 - `src/services/device_detector.py`：设备检测
@@ -46,5 +55,5 @@
 
 ## 修改日志稳定要求
 - 只允许在 `CHANGELOG.md` 中追加版本条目，不修改历史条目。
-- 重大重构或行为变更必须同步更新本 Anchor 文档。
-- 新功能开发时必须在本 Anchor 文档同步记录技术路径变化，防止实现与修改日志漂移。
+- 重大重构、文档版本治理或行为变更必须同步更新本 Anchor 文档。
+- 新功能开发时必须在本 Anchor 文档同步记录技术路径变化；当对历史版本做汇总归并时，必须在 `CHANGELOG.md` 与本 Anchor 文档同时落地，防止实现与修改日志漂移。
