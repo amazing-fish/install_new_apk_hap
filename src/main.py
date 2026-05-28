@@ -452,9 +452,10 @@ class App(tk.Tk):
                 self.install_status_var.set("就绪")
                 self._set_install_state(False)
                 return
+        allow_test = self.apk_test_var.get()
         threading.Thread(
             target=self._install_worker,
-            args=(selection_list,),
+            args=(selection_list, allow_test),
             daemon=True,
         ).start()
 
@@ -667,51 +668,55 @@ class App(tk.Tk):
         messagebox.showinfo("提示", f"已打包NEXTdemo日志：{zip_path}")
         self.log(f"获取NEXTdemo日志成功：设备 {device_id}，共 {file_count} 个文件，ZIP: {zip_path}")
 
-    def _install_worker(self, selection: List[str]) -> None:
+    def _install_worker(self, selection: List[str], allow_test: bool) -> None:
         self._log_threadsafe(f"开始安装到所选设备: {', '.join(selection)}")
         cancelled = False
-        for device_id in selection:
-            if self.install_stop_event.is_set():
-                cancelled = True
-                self._log_threadsafe("安装已中止")
-                break
-            device = next((d for d in self.devices if d.device_id == device_id), None)
-            if not device:
-                self._log_threadsafe(f"{device_id}: 设备信息未找到，跳过")
-                continue
-            if device.platform == "android":
-                if not self.latest_apk:
-                    self._log_threadsafe(f"{device_id}: 未找到 APK，跳过")
+        try:
+            for device_id in selection:
+                if self.install_stop_event.is_set():
+                    cancelled = True
+                    self._log_threadsafe("安装已中止")
+                    break
+                device = next((d for d in self.devices if d.device_id == device_id), None)
+                if not device:
+                    self._log_threadsafe(f"{device_id}: 设备信息未找到，跳过")
                     continue
-                allow_test = self.apk_test_var.get()
-                result = install_android(
-                    device_id,
-                    self.latest_apk,
-                    allow_test,
-                    self.install_stop_event,
-                )
-                self._log_threadsafe(f"Android {device_id} 执行命令: {' '.join(result.command)}")
-                self._log_threadsafe(
-                    f"Android {device_id} 安装结果: {result.process.returncode}\n"
-                    f"{result.process.stdout}\n{result.process.stderr}"
-                )
-            else:
-                if not self.latest_hap:
-                    self._log_threadsafe(f"{device_id}: 未找到 HAP，跳过")
-                    continue
-                result = install_harmony(device_id, self.latest_hap, self.install_stop_event)
-                self._log_threadsafe(f"Harmony {device_id} 执行命令: {' '.join(result.command)}")
-                self._log_threadsafe(
-                    f"Harmony {device_id} 安装结果: {result.process.returncode}\n"
-                    f"{result.process.stdout}\n{result.process.stderr}"
-                )
-            if self.install_stop_event.is_set():
-                cancelled = True
-                self._log_threadsafe(f"{device_id}: 安装已中止")
-                break
-        if cancelled:
-            self.after(0, self.install_status_var.set, "正在中止")
-        self.after(0, self._set_install_state, False)
+                if device.platform == "android":
+                    if not self.latest_apk:
+                        self._log_threadsafe(f"{device_id}: 未找到 APK，跳过")
+                        continue
+                    result = install_android(
+                        device_id,
+                        self.latest_apk,
+                        allow_test,
+                        self.install_stop_event,
+                    )
+                    self._log_threadsafe(f"Android {device_id} 执行命令: {' '.join(result.command)}")
+                    self._log_threadsafe(
+                        f"Android {device_id} 安装结果: {result.process.returncode}\n"
+                        f"{result.process.stdout}\n{result.process.stderr}"
+                    )
+                else:
+                    if not self.latest_hap:
+                        self._log_threadsafe(f"{device_id}: 未找到 HAP，跳过")
+                        continue
+                    result = install_harmony(device_id, self.latest_hap, self.install_stop_event)
+                    self._log_threadsafe(f"Harmony {device_id} 执行命令: {' '.join(result.command)}")
+                    self._log_threadsafe(
+                        f"Harmony {device_id} 安装结果: {result.process.returncode}\n"
+                        f"{result.process.stdout}\n{result.process.stderr}"
+                    )
+                if self.install_stop_event.is_set():
+                    cancelled = True
+                    self._log_threadsafe(f"{device_id}: 安装已中止")
+                    break
+        except Exception as error:
+            cancelled = True
+            self._log_threadsafe(f"安装线程异常: {error}")
+        finally:
+            if cancelled:
+                self.after(0, self.install_status_var.set, "正在中止")
+            self.after(0, self._set_install_state, False)
 
     def request_stop_install(self) -> None:
         if not self.installing:
