@@ -452,10 +452,12 @@ class App(tk.Tk):
                 self.install_status_var.set("就绪")
                 self._set_install_state(False)
                 return
+        selected_apk = self.latest_apk
+        selected_hap = self.latest_hap
         allow_test = self.apk_test_var.get()
         threading.Thread(
             target=self._install_worker,
-            args=(selection_list, allow_test),
+            args=(selection_list, selected_apk, selected_hap, allow_test),
             daemon=True,
         ).start()
 
@@ -668,7 +670,13 @@ class App(tk.Tk):
         messagebox.showinfo("提示", f"已打包NEXTdemo日志：{zip_path}")
         self.log(f"获取NEXTdemo日志成功：设备 {device_id}，共 {file_count} 个文件，ZIP: {zip_path}")
 
-    def _install_worker(self, selection: List[str], allow_test: bool) -> None:
+    def _install_worker(
+        self,
+        selection: List[str],
+        selected_apk: Optional[Path],
+        selected_hap: Optional[Path],
+        allow_test: bool,
+    ) -> None:
         self._log_threadsafe(f"开始安装到所选设备: {', '.join(selection)}")
         cancelled_by_user = False
         install_failed = False
@@ -683,12 +691,12 @@ class App(tk.Tk):
                     self._log_threadsafe(f"{device_id}: 设备信息未找到，跳过")
                     continue
                 if device.platform == "android":
-                    if not self.latest_apk:
+                    if not selected_apk:
                         self._log_threadsafe(f"{device_id}: 未找到 APK，跳过")
                         continue
                     result = install_android(
                         device_id,
-                        self.latest_apk,
+                        selected_apk,
                         allow_test,
                         self.install_stop_event,
                     )
@@ -698,10 +706,10 @@ class App(tk.Tk):
                         f"{result.process.stdout}\n{result.process.stderr}"
                     )
                 else:
-                    if not self.latest_hap:
+                    if not selected_hap:
                         self._log_threadsafe(f"{device_id}: 未找到 HAP，跳过")
                         continue
-                    result = install_harmony(device_id, self.latest_hap, self.install_stop_event)
+                    result = install_harmony(device_id, selected_hap, self.install_stop_event)
                     self._log_threadsafe(f"Harmony {device_id} 执行命令: {' '.join(result.command)}")
                     self._log_threadsafe(
                         f"Harmony {device_id} 安装结果: {result.process.returncode}\n"
