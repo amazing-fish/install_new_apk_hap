@@ -670,11 +670,12 @@ class App(tk.Tk):
 
     def _install_worker(self, selection: List[str], allow_test: bool) -> None:
         self._log_threadsafe(f"开始安装到所选设备: {', '.join(selection)}")
-        cancelled = False
+        cancelled_by_user = False
+        install_failed = False
         try:
             for device_id in selection:
                 if self.install_stop_event.is_set():
-                    cancelled = True
+                    cancelled_by_user = True
                     self._log_threadsafe("安装已中止")
                     break
                 device = next((d for d in self.devices if d.device_id == device_id), None)
@@ -707,14 +708,16 @@ class App(tk.Tk):
                         f"{result.process.stdout}\n{result.process.stderr}"
                     )
                 if self.install_stop_event.is_set():
-                    cancelled = True
+                    cancelled_by_user = True
                     self._log_threadsafe(f"{device_id}: 安装已中止")
                     break
         except Exception as error:
-            cancelled = True
+            install_failed = True
             self._log_threadsafe(f"安装线程异常: {error}")
         finally:
-            if cancelled:
+            if install_failed:
+                self.after(0, self.install_status_var.set, "安装异常")
+            elif cancelled_by_user:
                 self.after(0, self.install_status_var.set, "正在中止")
             self.after(0, self._set_install_state, False)
 
