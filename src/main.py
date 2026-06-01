@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, Iterable, List, Optional, Set, Tuple
 
 from config_manager import ConfigManager
 from services.device_detector import DeviceInfo, detect_devices, get_hdc_device_udid
@@ -41,6 +41,15 @@ def build_crash_log_target(device: DeviceInfo, output_dir: Path) -> CrashLogTarg
     if device.platform == "harmony":
         return CrashLogTarget(platform="harmony", output_path=output_dir)
     raise ValueError(f"unsupported device platform: {device.platform}")
+
+
+def get_device_display_name(device_id: str, name_mapping: Dict[str, str]) -> str:
+    name = name_mapping.get(device_id, "").strip()
+    return name or device_id
+
+
+def format_device_ids_for_log(device_ids: Iterable[str], name_mapping: Dict[str, str]) -> str:
+    return "，".join(get_device_display_name(device_id, name_mapping) for device_id in device_ids)
 
 
 class App(tk.Tk):
@@ -123,6 +132,9 @@ class App(tk.Tk):
         self.name_entry = ttk.Entry(name_frame, textvariable=self.name_var, width=40)
         self.name_entry.pack(side=tk.LEFT, padx=6)
         ttk.Button(name_frame, text="保存名称", command=self.save_device_name).pack(side=tk.LEFT)
+        ttk.Button(name_frame, text="复制设备码", command=self.copy_selected_device_id).pack(
+            side=tk.LEFT, padx=(6, 0)
+        )
 
         folder_frame = ttk.LabelFrame(container, text="安装包目录")
         folder_frame.pack(fill=tk.X, pady=8)
@@ -203,6 +215,15 @@ class App(tk.Tk):
         if content:
             self.clipboard_append(content)
 
+    def _device_name_mapping(self) -> Dict[str, str]:
+        return self.config_manager.data.get("device_names", {})
+
+    def _device_label(self, device_id: str) -> str:
+        return get_device_display_name(device_id, self._device_name_mapping())
+
+    def _device_labels_for_log(self, device_ids: Iterable[str]) -> str:
+        return format_device_ids_for_log(device_ids, self._device_name_mapping())
+
     def refresh_devices(self) -> None:
         self._set_refresh_state(True)
         self._log_threadsafe("开始刷新设备列表")
@@ -254,7 +275,7 @@ class App(tk.Tk):
                 f"Android {android_count} 台, Harmony {harmony_count} 台, 总计 {total_count} 台"
             )
             if new_device_ids:
-                new_device_text = "，".join(sorted(new_device_ids))
+                new_device_text = self._device_labels_for_log(sorted(new_device_ids))
                 self.log(f"新增设备已置顶高亮: {new_device_text}")
         self._set_refresh_state(False)
 
@@ -271,6 +292,24 @@ class App(tk.Tk):
         current_name = self.device_tree.set(device_id, "name")
         self.name_var.set(current_name)
 
+    def _single_selected_or_only_device_id(self) -> Optional[str]:
+        selection = self.device_tree.selection()
+        if len(selection) == 1:
+            return selection[0]
+        if not selection and len(self.devices) == 1:
+            return self.devices[0].device_id
+        return None
+
+    def copy_selected_device_id(self) -> None:
+        device_id = self._single_selected_or_only_device_id()
+        if not device_id:
+            messagebox.showwarning("提示", "请选择一个设备复制设备码")
+            self.log("复制设备码失败：请选择一个设备")
+            return
+        self.clipboard_clear()
+        self.clipboard_append(device_id)
+        self.log(f"已复制设备码: {self._device_label(device_id)}")
+
     def fetch_hdc_udid(self) -> None:
         if self.udid_fetching:
             self.log("获取 UDID 中：请稍候")
@@ -282,20 +321,21 @@ class App(tk.Tk):
             return
         device_id = selection[0]
         device = next((d for d in self.devices if d.device_id == device_id), None)
+        device_label = self._device_label(device_id)
         if not device:
             messagebox.showwarning("提示", "设备信息不存在，请先刷新设备")
-            self.log(f"获取 UDID 失败：设备 {device_id} 信息不存在")
+            self.log(f"获取 UDID 失败：设备 {device_label} 信息不存在")
             return
         if device.platform == "android":
             messagebox.showwarning("提示", "仅支持NEXT")
-            self.log(f"获取 UDID 失败：设备 {device_id} 为 Android，仅支持 NEXT")
+            self.log(f"获取 UDID 失败：设备 {device_label} 为 Android，仅支持 NEXT")
             return
         if device.platform != "harmony":
             messagebox.showwarning("提示", "仅支持 NEXT 设备获取 UDID")
-            self.log(f"获取 UDID 失败：设备 {device_id} 平台不支持")
+            self.log(f"获取 UDID 失败：设备 {device_label} 平台不支持")
             return
         self._set_udid_fetch_state(True)
-        self.log(f"开始获取设备 UDID: {device_id}")
+        self.log(f"开始获取设备 UDID: {device_label}")
         threading.Thread(target=self._fetch_hdc_udid_worker, args=(device_id,), daemon=True).start()
 
     def _fetch_hdc_udid_worker(self, device_id: str) -> None:
@@ -304,14 +344,15 @@ class App(tk.Tk):
 
     def _apply_hdc_udid_result(self, device_id: str, udid: Optional[str]) -> None:
         self._set_udid_fetch_state(False)
+        device_label = self._device_label(device_id)
         if not udid:
-            messagebox.showwarning("提示", f"未获取到设备 {device_id} 的 UDID")
-            self.log(f"获取 UDID 失败：设备 {device_id} 未返回 UDID")
+            messagebox.showwarning("提示", f"未获取到设备 {device_label} 的 UDID")
+            self.log(f"获取 UDID 失败：设备 {device_label} 未返回 UDID")
             return
         self.clipboard_clear()
         self.clipboard_append(udid)
-        self.log(f"已获取设备 UDID（已复制到剪贴板）: {device_id} -> {udid}")
-        messagebox.showinfo("UDID", f"设备 {device_id} 的 UDID：\n{udid}\n\n已复制到剪贴板")
+        self.log(f"已获取设备 UDID（已复制到剪贴板）: {device_label} -> {udid}")
+        messagebox.showinfo("UDID", f"设备 {device_label} 的 UDID：\n{udid}\n\n已复制到剪贴板")
 
     def save_device_name(self) -> None:
         selection = self.device_tree.selection()
@@ -326,7 +367,7 @@ class App(tk.Tk):
         name = self.name_var.get().strip()
         self.config_manager.set_device_name(device_id, name)
         self.device_tree.set(device_id, "name", name)
-        self.log(f"已保存设备名称: {device_id} -> {name}")
+        self.log(f"已保存设备名称: {self._device_label(device_id)}")
 
     def choose_folder(self) -> None:
         folder = filedialog.askdirectory()
@@ -459,7 +500,7 @@ class App(tk.Tk):
         current_device_ids = {device.device_id for device in self.devices}
         missing_devices = previous_selection - current_device_ids
         if missing_devices:
-            missing_text = "，".join(sorted(missing_devices))
+            missing_text = self._device_labels_for_log(sorted(missing_devices))
             messagebox.showwarning("提示", f"已选设备已断开: {missing_text}，请确认设备状态")
             self.log(f"安装提示：已选设备断开 {missing_text}")
         selection_list = [device_id for device_id in previous_selection if device_id in current_device_ids]
@@ -469,7 +510,7 @@ class App(tk.Tk):
                 self.device_tree.selection_set(selection_list[0])
                 current_name = self.device_tree.set(selection_list[0], "name")
                 self.name_var.set(current_name)
-                self.log(f"检测到单设备，默认安装到: {selection_list[0]}")
+                self.log(f"检测到单设备，默认安装到: {self._device_label(selection_list[0])}")
             else:
                 messagebox.showwarning("提示", "请先选择设备")
                 self.log("安装失败：未选择设备")
@@ -532,26 +573,27 @@ class App(tk.Tk):
             return
         device_id = selection[0]
         device = next((d for d in self.devices if d.device_id == device_id), None)
+        device_label = self._device_label(device_id)
         if not device:
             messagebox.showwarning("提示", "设备信息不存在，请先刷新设备")
-            self.log(f"获取崩溃日志失败：设备 {device_id} 信息不存在")
+            self.log(f"获取崩溃日志失败：设备 {device_label} 信息不存在")
             return
         try:
             target = build_crash_log_target(device, self._get_log_output_dir())
         except ValueError:
             messagebox.showwarning("提示", "仅支持 Android 或 Harmony 设备")
-            self.log(f"获取崩溃日志失败：设备 {device_id} 平台不支持")
+            self.log(f"获取崩溃日志失败：设备 {device_label} 平台不支持")
             return
         self._set_crash_log_fetch_state(True)
         if target.platform == "android":
-            self.log(f"开始获取 Android 崩溃日志: {device_id} -> {target.output_path}")
+            self.log(f"开始获取 Android 崩溃日志: {device_label} -> {target.output_path}")
             threading.Thread(
                 target=self._fetch_android_crash_log_worker,
                 args=(device_id, target.output_path),
                 daemon=True,
             ).start()
             return
-        self.log(f"开始获取 Harmony 最近 7 天崩溃日志: {device_id} -> {target.output_path}")
+        self.log(f"开始获取 Harmony 最近 7 天崩溃日志: {device_label} -> {target.output_path}")
         threading.Thread(
             target=self._fetch_harmony_crash_log_worker,
             args=(device_id, target.output_path),
@@ -579,13 +621,14 @@ class App(tk.Tk):
         stderr: str,
     ) -> None:
         self._set_crash_log_fetch_state(False)
-        self.log(f"Android {device_id} 崩溃日志命令: {' '.join(command)}")
+        device_label = self._device_label(device_id)
+        self.log(f"Android {device_label} 崩溃日志命令: {' '.join(command)}")
         if returncode != 0:
-            messagebox.showwarning("提示", f"获取崩溃日志失败，设备 {device_id} 返回码: {returncode}")
-            self.log(f"获取崩溃日志失败：设备 {device_id} 返回码 {returncode}\n{stderr}")
+            messagebox.showwarning("提示", f"获取崩溃日志失败，设备 {device_label} 返回码: {returncode}")
+            self.log(f"获取崩溃日志失败：设备 {device_label} 返回码 {returncode}\n{stderr}")
             return
         messagebox.showinfo("提示", f"已写入崩溃日志：{log_path}")
-        self.log(f"获取崩溃日志成功：设备 {device_id}，输出已追加到 {log_path}")
+        self.log(f"获取崩溃日志成功：设备 {device_label}，输出已追加到 {log_path}")
 
     def _fetch_harmony_crash_log_worker(self, device_id: str, output_dir: Path) -> None:
         result = run_harmony_recent_crash_zip(device_id, output_dir, days=7)
@@ -614,17 +657,18 @@ class App(tk.Tk):
         file_count: int,
     ) -> None:
         self._set_crash_log_fetch_state(False)
-        self.log(f"Harmony {device_id} 崩溃日志命令: {' '.join(command)}")
+        device_label = self._device_label(device_id)
+        self.log(f"Harmony {device_label} 崩溃日志命令: {' '.join(command)}")
         if returncode != 0:
-            messagebox.showwarning("提示", f"获取崩溃日志失败，设备 {device_id} 返回码: {returncode}")
-            self.log(f"获取崩溃日志失败：设备 {device_id} 返回码 {returncode}\n{stderr}")
+            messagebox.showwarning("提示", f"获取崩溃日志失败，设备 {device_label} 返回码: {returncode}")
+            self.log(f"获取崩溃日志失败：设备 {device_label} 返回码 {returncode}\n{stderr}")
             return
         if not zip_path:
             messagebox.showwarning("提示", f"最近 7 天未打包到 crash 日志，请检查设备路径（目录：{output_dir}）")
-            self.log(f"获取崩溃日志完成但无输出：设备 {device_id}\n{stderr or stdout}")
+            self.log(f"获取崩溃日志完成但无输出：设备 {device_label}\n{stderr or stdout}")
             return
         messagebox.showinfo("提示", f"已打包最近 7 天崩溃日志：{zip_path}")
-        self.log(f"获取崩溃日志成功：设备 {device_id}，共 {file_count} 个文件，ZIP: {zip_path}")
+        self.log(f"获取崩溃日志成功：设备 {device_label}，共 {file_count} 个文件，ZIP: {zip_path}")
 
     def fetch_nextdemo_log(self) -> None:
         if self.crash_log_fetching:
@@ -637,17 +681,18 @@ class App(tk.Tk):
             return
         device_id = selection[0]
         device = next((d for d in self.devices if d.device_id == device_id), None)
+        device_label = self._device_label(device_id)
         if not device:
             messagebox.showwarning("提示", "设备信息不存在，请先刷新设备")
-            self.log(f"获取NEXTdemo日志失败：设备 {device_id} 信息不存在")
+            self.log(f"获取NEXTdemo日志失败：设备 {device_label} 信息不存在")
             return
         if device.platform != "harmony":
             messagebox.showwarning("提示", "仅支持 Harmony 设备")
-            self.log(f"获取NEXTdemo日志失败：设备 {device_id} 非 Harmony")
+            self.log(f"获取NEXTdemo日志失败：设备 {device_label} 非 Harmony")
             return
         output_dir = self._get_log_output_dir()
         self._set_crash_log_fetch_state(True)
-        self.log(f"开始获取NEXTdemo日志: {device_id} -> {output_dir}")
+        self.log(f"开始获取NEXTdemo日志: {device_label} -> {output_dir}")
         threading.Thread(
             target=self._fetch_nextdemo_log_worker,
             args=(device_id, output_dir),
@@ -679,17 +724,18 @@ class App(tk.Tk):
         file_count: int,
     ) -> None:
         self._set_crash_log_fetch_state(False)
+        device_label = self._device_label(device_id)
         self.log(f"NEXTdemo 日志命令: {' '.join(command)}")
         if returncode != 0:
-            messagebox.showwarning("提示", f"获取NEXTdemo日志失败，设备 {device_id} 返回码: {returncode}")
-            self.log(f"获取NEXTdemo日志失败：设备 {device_id} 返回码 {returncode}\n{stderr}")
+            messagebox.showwarning("提示", f"获取NEXTdemo日志失败，设备 {device_label} 返回码: {returncode}")
+            self.log(f"获取NEXTdemo日志失败：设备 {device_label} 返回码 {returncode}\n{stderr}")
             return
         if not zip_path:
             messagebox.showwarning("提示", "未找到 haps/entry/files/log-ads 或无可拉取文件")
-            self.log(f"获取NEXTdemo日志完成但无输出：设备 {device_id}\n{stderr or stdout}")
+            self.log(f"获取NEXTdemo日志完成但无输出：设备 {device_label}\n{stderr or stdout}")
             return
         messagebox.showinfo("提示", f"已打包NEXTdemo日志：{zip_path}")
-        self.log(f"获取NEXTdemo日志成功：设备 {device_id}，共 {file_count} 个文件，ZIP: {zip_path}")
+        self.log(f"获取NEXTdemo日志成功：设备 {device_label}，共 {file_count} 个文件，ZIP: {zip_path}")
 
     def _install_worker(
         self,
@@ -698,22 +744,23 @@ class App(tk.Tk):
         selected_hap: Optional[Path],
         allow_test: bool,
     ) -> None:
-        self._log_threadsafe(f"开始安装到所选设备: {', '.join(selection)}")
+        self._log_threadsafe(f"开始安装到所选设备: {self._device_labels_for_log(selection)}")
         cancelled_by_user = False
         install_failed = False
         try:
             for device_id in selection:
+                device_label = self._device_label(device_id)
                 if self.install_stop_event.is_set():
                     cancelled_by_user = True
                     self._log_threadsafe("安装已中止")
                     break
                 device = next((d for d in self.devices if d.device_id == device_id), None)
                 if not device:
-                    self._log_threadsafe(f"{device_id}: 设备信息未找到，跳过")
+                    self._log_threadsafe(f"{device_label}: 设备信息未找到，跳过")
                     continue
                 if device.platform == "android":
                     if not selected_apk:
-                        self._log_threadsafe(f"{device_id}: 未找到 APK，跳过")
+                        self._log_threadsafe(f"{device_label}: 未找到 APK，跳过")
                         continue
                     result = install_android(
                         device_id,
@@ -721,24 +768,24 @@ class App(tk.Tk):
                         allow_test,
                         self.install_stop_event,
                     )
-                    self._log_threadsafe(f"Android {device_id} 执行命令: {' '.join(result.command)}")
+                    self._log_threadsafe(f"Android {device_label} 执行命令: {' '.join(result.command)}")
                     self._log_threadsafe(
-                        f"Android {device_id} 安装结果: {result.process.returncode}\n"
+                        f"Android {device_label} 安装结果: {result.process.returncode}\n"
                         f"{result.process.stdout}\n{result.process.stderr}"
                     )
                 else:
                     if not selected_hap:
-                        self._log_threadsafe(f"{device_id}: 未找到 HAP，跳过")
+                        self._log_threadsafe(f"{device_label}: 未找到 HAP，跳过")
                         continue
                     result = install_harmony(device_id, selected_hap, self.install_stop_event)
-                    self._log_threadsafe(f"Harmony {device_id} 执行命令: {' '.join(result.command)}")
+                    self._log_threadsafe(f"Harmony {device_label} 执行命令: {' '.join(result.command)}")
                     self._log_threadsafe(
-                        f"Harmony {device_id} 安装结果: {result.process.returncode}\n"
+                        f"Harmony {device_label} 安装结果: {result.process.returncode}\n"
                         f"{result.process.stdout}\n{result.process.stderr}"
                     )
                 if self.install_stop_event.is_set():
                     cancelled_by_user = True
-                    self._log_threadsafe(f"{device_id}: 安装已中止")
+                    self._log_threadsafe(f"{device_label}: 安装已中止")
                     break
         except Exception as error:
             install_failed = True

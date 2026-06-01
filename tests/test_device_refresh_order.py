@@ -46,3 +46,26 @@ def test_build_crash_log_target_dispatches_by_device_platform() -> None:
     assert android_target.output_path == output_dir / "crash.log"
     assert harmony_target.platform == "harmony"
     assert harmony_target.output_path == output_dir
+
+
+def test_get_device_display_name_prefers_saved_name() -> None:
+    name_mapping = {
+        "android-device": "Pixel 8",
+        "blank-device": "  ",
+    }
+
+    assert main.get_device_display_name("android-device", name_mapping) == "Pixel 8"
+    assert main.get_device_display_name("blank-device", name_mapping) == "blank-device"
+    assert main.get_device_display_name("unknown-device", name_mapping) == "unknown-device"
+
+
+def test_format_device_ids_for_log_uses_saved_names() -> None:
+    name_mapping = {
+        "android-device": "Pixel 8",
+        "harmony-device": "Mate 70",
+    }
+
+    assert main.format_device_ids_for_log(
+        ["android-device", "unknown-device", "harmony-device"],
+        name_mapping,
+    ) == "Pixel 8，unknown-device，Mate 70"
