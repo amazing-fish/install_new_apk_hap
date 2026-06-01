@@ -11,6 +11,10 @@ class DeviceInfo:
     status: str
 
 
+def _is_device_diagnostic_line(line: str) -> bool:
+    return line.startswith("*") or line.startswith("[")
+
+
 def _run_command(command: List[str]) -> str:
     try:
         run_kwargs = {
@@ -39,6 +43,8 @@ def detect_adb_devices() -> List[DeviceInfo]:
         line = line.strip()
         if not line:
             continue
+        if _is_device_diagnostic_line(line):
+            continue
         parts = line.split()
         if len(parts) < 2:
             continue
@@ -60,7 +66,7 @@ def detect_hdc_devices() -> List[DeviceInfo]:
         line = line.strip()
         if not line:
             continue
-        if line == "[Empty]":
+        if line == "[Empty]" or _is_device_diagnostic_line(line):
             continue
         device_id = line
         status = "device"
