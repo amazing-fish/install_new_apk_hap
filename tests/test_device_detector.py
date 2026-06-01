@@ -23,6 +23,20 @@ R5CN1234567 device product:example model:Phone device:phone transport_id:1
     assert devices[0].status == "device"
 
 
+def test_detect_adb_devices_ignores_header_after_diagnostic_lines(monkeypatch) -> None:
+    output = """* daemon not running; starting now at tcp:5037
+* daemon started successfully
+List of devices attached
+R5CN1234567 device product:example model:Phone device:phone transport_id:1
+"""
+
+    monkeypatch.setattr(device_detector, "_run_command", lambda _command: output)
+
+    devices = device_detector.detect_adb_devices()
+
+    assert [device.device_id for device in devices] == ["R5CN1234567"]
+
+
 def test_detect_hdc_devices_ignores_diagnostic_lines(monkeypatch) -> None:
     output = """* daemon not running; starting now
 [Fail] failed to connect hdc server

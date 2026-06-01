@@ -15,6 +15,10 @@ def _is_device_diagnostic_line(line: str) -> bool:
     return line.startswith("*") or line.startswith("[")
 
 
+def _is_adb_header_line(line: str) -> bool:
+    return line.startswith("List of devices")
+
+
 def _run_command(command: List[str]) -> str:
     try:
         run_kwargs = {
@@ -39,11 +43,11 @@ def detect_adb_devices() -> List[DeviceInfo]:
     if not output:
         return devices
     lines = output.splitlines()
-    for line in lines[1:]:
+    for line in lines:
         line = line.strip()
         if not line:
             continue
-        if _is_device_diagnostic_line(line):
+        if _is_device_diagnostic_line(line) or _is_adb_header_line(line):
             continue
         parts = line.split()
         if len(parts) < 2:
