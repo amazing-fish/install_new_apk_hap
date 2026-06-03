@@ -9,7 +9,7 @@
 - 设备自定义命名
 - Harmony 最近 7 天崩溃日志 zip 打包
 - NEXTdemo 日志（`haps/entry/files/log-ads`）zip 打包
-- 可视化界面
+- 现代化 Tkinter 可视化界面，展示设备摘要、已选设备摘要、安装包摘要和操作状态
 
 ## 使用方式
 ```bash

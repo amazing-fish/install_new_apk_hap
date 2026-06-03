@@ -1,6 +1,9 @@
 import os
+import shutil
 import subprocess
 from dataclasses import dataclass
+from functools import lru_cache
+from pathlib import Path
 from typing import List, Optional
 
 
@@ -19,6 +22,40 @@ def _is_adb_header_line(line: str) -> bool:
     return line.startswith("List of devices")
 
 
+@lru_cache(maxsize=1)
+def _resolve_hdc_executable() -> str:
+    for env_name in ("HDC_EXECUTABLE", "HDC_PATH"):
+        configured_path = os.getenv(env_name)
+        if configured_path:
+            path = Path(configured_path)
+            if path.is_dir():
+                return str(path / "hdc.exe")
+            return configured_path
+
+    path_hdc = shutil.which("hdc")
+    if path_hdc:
+        return path_hdc
+
+    candidate_paths = [
+        Path(os.getenv("LOCALAPPDATA", "")) / "Huawei" / "Sdk" / "default" / "openharmony" / "toolchains" / "hdc.exe",
+        Path(os.getenv("APPDATA", "")) / "Huawei" / "Sdk" / "default" / "openharmony" / "toolchains" / "hdc.exe",
+        Path(os.getenv("ProgramFiles", "")) / "Huawei" / "DevEco Studio" / "sdk" / "default" / "openharmony" / "toolchains" / "hdc.exe",
+        Path(os.getenv("ProgramFiles(x86)", "")) / "Huawei" / "DevEco Studio" / "sdk" / "default" / "openharmony" / "toolchains" / "hdc.exe",
+        Path("D:/Develop/Tool/DevEcoStudio/sdk/default/openharmony/toolchains/hdc.exe"),
+    ]
+    for candidate in candidate_paths:
+        if candidate.exists():
+            return str(candidate)
+
+    return "hdc"
+
+
+def _resolve_command(command: List[str]) -> List[str]:
+    if command and command[0] == "hdc":
+        return [_resolve_hdc_executable(), *command[1:]]
+    return command
+
+
 def _run_command(command: List[str]) -> str:
     try:
         run_kwargs = {
@@ -29,7 +66,7 @@ def _run_command(command: List[str]) -> str:
         if os.name == "nt":
             run_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
         result = subprocess.run(
-            command,
+            _resolve_command(command),
             **run_kwargs,
         )
     except FileNotFoundError:
@@ -72,8 +109,11 @@ def detect_hdc_devices() -> List[DeviceInfo]:
             continue
         if line == "[Empty]" or _is_device_diagnostic_line(line):
             continue
-        device_id = line
-        status = "device"
+        parts = line.split()
+        if not parts:
+            continue
+        device_id = parts[0]
+        status = parts[1] if len(parts) > 1 else "device"
         devices.append(DeviceInfo(device_id=device_id, platform="harmony", status=status))
     return devices
 
@@ -92,7 +132,7 @@ def get_hdc_device_udid(device_id: str) -> Optional[str]:
         run_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
     try:
         result = subprocess.run(
-            ["hdc", "-t", device_id, "shell", "bm", "get", "--udid"],
+            _resolve_command(["hdc", "-t", device_id, "shell", "bm", "get", "--udid"]),
             **run_kwargs,
         )
     except FileNotFoundError:
