@@ -72,6 +72,7 @@ class App(tk.Tk):
         self.udid_fetching = False
         self.crash_log_fetching = False
         self.device_ids_before_last_refresh: Optional[Set[str]] = None
+        self._latest_refresh_request_id = 0
 
         self._build_ui()
         self.refresh_devices()
@@ -225,16 +226,34 @@ class App(tk.Tk):
         return format_device_ids_for_log(device_ids, self._device_name_mapping())
 
     def refresh_devices(self) -> None:
+        self._latest_refresh_request_id += 1
+        request_id = self._latest_refresh_request_id
         self._set_refresh_state(True)
         self._log_threadsafe("开始刷新设备列表")
-        threading.Thread(target=self._refresh_devices_worker, daemon=True).start()
+        threading.Thread(target=self._refresh_devices_worker, args=(request_id,), daemon=True).start()
 
-    def _refresh_devices_worker(self) -> None:
-        devices = detect_devices()
-        self.after(0, self._apply_device_refresh, devices)
+    def _refresh_devices_worker(self, request_id: int) -> None:
+        try:
+            devices = detect_devices()
+        except Exception as error:
+            self.after(0, self._apply_device_refresh_error, request_id, error)
+            return
+        self.after(0, self._apply_device_refresh_result, request_id, devices)
+
+    def _apply_device_refresh_result(self, request_id: int, devices: List[DeviceInfo]) -> None:
+        if request_id != self._latest_refresh_request_id:
+            return
+        self._apply_device_refresh(devices)
+
+    def _apply_device_refresh_error(self, request_id: int, error: Exception) -> None:
+        if request_id != self._latest_refresh_request_id:
+            return
+        self.log(f"刷新设备列表失败：{error}")
+        self._set_refresh_state(False)
 
     def _apply_device_refresh(self, devices: List[DeviceInfo]) -> None:
         current_device_ids = {device.device_id for device in devices}
+        previous_selection = set(self.device_tree.selection())
         if self.device_ids_before_last_refresh is None:
             ordered_devices = devices
             new_device_ids: Set[str] = set()
@@ -260,7 +279,17 @@ class App(tk.Tk):
             )
             if len(self.devices) == 1:
                 only_device_id = device.device_id
-        if only_device_id:
+        preserved_selection = [
+            device.device_id for device in self.devices if device.device_id in previous_selection
+        ]
+        if preserved_selection:
+            self.device_tree.selection_set(*preserved_selection)
+            if len(preserved_selection) == 1:
+                current_name = self.device_tree.set(preserved_selection[0], "name")
+                self.name_var.set(current_name)
+            else:
+                self.name_var.set("")
+        elif only_device_id:
             self.device_tree.selection_set(only_device_id)
             current_name = self.device_tree.set(only_device_id, "name")
             self.name_var.set(current_name)
@@ -601,7 +630,11 @@ class App(tk.Tk):
         ).start()
 
     def _fetch_android_crash_log_worker(self, device_id: str, log_path: Path) -> None:
-        result = run_android_dropbox_dump(device_id, log_path)
+        try:
+            result = run_android_dropbox_dump(device_id, log_path)
+        except Exception as error:
+            self.after(0, self._apply_log_collection_error, "获取崩溃日志", device_id, error)
+            return
         self.after(
             0,
             self._apply_android_crash_log_result,
@@ -611,6 +644,12 @@ class App(tk.Tk):
             result.process.returncode,
             result.process.stderr,
         )
+
+    def _apply_log_collection_error(self, operation: str, device_id: str, error: Exception) -> None:
+        self._set_crash_log_fetch_state(False)
+        device_label = self._device_label(device_id)
+        messagebox.showwarning("提示", f"{operation}失败，设备 {device_label}: {error}")
+        self.log(f"{operation}失败：设备 {device_label}\n{error}")
 
     def _apply_android_crash_log_result(
         self,
@@ -631,7 +670,11 @@ class App(tk.Tk):
         self.log(f"获取崩溃日志成功：设备 {device_label}，输出已追加到 {log_path}")
 
     def _fetch_harmony_crash_log_worker(self, device_id: str, output_dir: Path) -> None:
-        result = run_harmony_recent_crash_zip(device_id, output_dir, days=7)
+        try:
+            result = run_harmony_recent_crash_zip(device_id, output_dir, days=7)
+        except Exception as error:
+            self.after(0, self._apply_log_collection_error, "获取崩溃日志", device_id, error)
+            return
         self.after(
             0,
             self._apply_harmony_crash_log_result,
@@ -700,7 +743,11 @@ class App(tk.Tk):
         ).start()
 
     def _fetch_nextdemo_log_worker(self, device_id: str, output_dir: Path) -> None:
-        result = run_harmony_nextdemo_log_zip(device_id, output_dir)
+        try:
+            result = run_harmony_nextdemo_log_zip(device_id, output_dir)
+        except Exception as error:
+            self.after(0, self._apply_log_collection_error, "获取NEXTdemo日志", device_id, error)
+            return
         self.after(
             0,
             self._apply_nextdemo_log_result,
