@@ -5,23 +5,61 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Expected VERSION value, for example v0.4.8"
+        required: false
+        type: string
 
 jobs:
   build:
     permissions:
       contents: write
     runs-on: windows-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: version
+        shell: pwsh
+        env:
+          DISPATCH_VERSION: ${{ inputs.version || '' }}
+        run: |
+          $fileVersion = (Get-Content -Raw VERSION).Trim()
+          if (-not $fileVersion) {
+            throw "VERSION is empty."
+          }
+
+          if ($fileVersion -notmatch '^v\d+\.\d+\.\d+$') {
+            throw "VERSION must look like vX.Y.Z, got '$fileVersion'."
+          }
+
+          $inputVersion = $env:DISPATCH_VERSION.Trim()
+          if ($inputVersion -and $inputVersion -ne $fileVersion) {
+            throw "workflow_dispatch version '$inputVersion' does not match VERSION '$fileVersion'."
+          }
+
+          if ($env:GITHUB_REF -like 'refs/tags/v*') {
+            $tagVersion = $env:GITHUB_REF_NAME
+            if ($tagVersion -ne $fileVersion) {
+              throw "Tag '$tagVersion' does not match VERSION '$fileVersion'."
+            }
+          }
+
+          "version=$fileVersion" >> $env:GITHUB_OUTPUT
 
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Install PyInstaller
-        run: python -m pip install --upgrade pip pyinstaller
+      - name: Install build dependencies
+        run: python -m pip install --upgrade pip pyinstaller pytest
+
+      - name: Run tests
+        run: python -m pytest -q
 
       - name: Build EXE
         run: pyinstaller --noconsole --onefile --name install_new_apk_hap src/main.py
@@ -29,8 +67,10 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: install_new_apk_hap-windows
+          name: install_new_apk_hap-windows-${{ steps.version.outputs.version }}
           path: dist/install_new_apk_hap.exe
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Upload release asset
         if: startsWith(github.ref, 'refs/tags/v')
