@@ -29,6 +29,18 @@ class CollectResult:
     file_count: int = 0
 
 
+def _command_error_result(command: List[str], error: Exception) -> subprocess.CompletedProcess:
+    return subprocess.CompletedProcess(command, 1, "", f"命令执行失败: {command[0]} ({error})")
+
+
+def _safe_filename_part(value: str) -> str:
+    safe = "".join(
+        char if char.isalnum() or char in ("-", "_", ".") else "_"
+        for char in value.strip()
+    )
+    return safe or "device"
+
+
 def _run_install_command(command: List[str], stop_event: Optional[threading.Event]) -> InstallResult:
     run_kwargs = {"stdout": subprocess.PIPE, "stderr": subprocess.PIPE, "text": True}
     if os.name == "nt":
@@ -55,10 +67,7 @@ def _run_install_command(command: List[str], stop_event: Optional[threading.Even
 
 def run_android_dropbox_dump(device_id: str, log_path: Path) -> CommandResult:
     command = ["adb", "-s", device_id, "shell", "dumpsys", "dropbox", "--print"]
-    run_kwargs = {"stdout": subprocess.PIPE, "stderr": subprocess.PIPE, "text": True}
-    if os.name == "nt":
-        run_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
-    process = subprocess.run(command, **run_kwargs)
+    process = _run_command(command)
     if process.returncode == 0 and process.stdout:
         log_path.parent.mkdir(parents=True, exist_ok=True)
         with log_path.open("a", encoding="utf-8", newline="\n") as log_file:
@@ -72,53 +81,59 @@ def _run_command(command: List[str]) -> subprocess.CompletedProcess:
     run_kwargs = {"stdout": subprocess.PIPE, "stderr": subprocess.PIPE, "text": True}
     if os.name == "nt":
         run_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
-    return subprocess.run(command, **run_kwargs)
+    try:
+        return subprocess.run(command, **run_kwargs)
+    except FileNotFoundError as error:
+        return _command_error_result(command, error)
 
 
 def run_harmony_recent_crash_zip(device_id: str, output_dir: Path, days: int = 7) -> CollectResult:
     remote_crash_dir = "/data/log/faultlog/faultlogger"
-    fetch_command = ["hdc", "-t", device_id, "file", "recv", remote_crash_dir, str(output_dir)]
     output_dir.mkdir(parents=True, exist_ok=True)
-    fetch_result = _run_command(fetch_command)
-    if fetch_result.returncode != 0:
-        return CollectResult(command=fetch_command, process=fetch_result)
-
-    local_crash_dir = output_dir / "faultlogger"
-    if not local_crash_dir.exists():
-        return CollectResult(
-            command=fetch_command,
-            process=subprocess.CompletedProcess(
-                fetch_command,
-                1,
-                "",
-                "未找到拉取后的 faultlogger 目录",
-            ),
-        )
-
-    cutoff = datetime.now() - timedelta(days=days)
-    target_files: List[Path] = []
-    for file_path in local_crash_dir.rglob("*"):
-        if not file_path.is_file():
-            continue
-        if "crash" not in file_path.name.lower():
-            continue
-        modified_at = datetime.fromtimestamp(file_path.stat().st_mtime)
-        if modified_at >= cutoff:
-            target_files.append(file_path)
-
-    if not target_files:
-        return CollectResult(
-            command=fetch_command,
-            process=subprocess.CompletedProcess(fetch_command, 0, "", "最近 7 天未匹配到 crash 文件"),
-            file_count=0,
-        )
-
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    zip_path = output_dir / f"harmony_crash_{device_id}_{timestamp}.zip"
-    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zip_file:
-        for file_path in target_files:
-            arcname = file_path.relative_to(local_crash_dir)
-            zip_file.write(file_path, arcname.as_posix())
+    safe_device_id = _safe_filename_part(device_id)
+    with tempfile.TemporaryDirectory(prefix=f"harmony_crash_{safe_device_id}_", dir=output_dir) as temp_dir:
+        receive_dir = Path(temp_dir)
+        fetch_command = ["hdc", "-t", device_id, "file", "recv", remote_crash_dir, str(receive_dir)]
+        fetch_result = _run_command(fetch_command)
+        if fetch_result.returncode != 0:
+            return CollectResult(command=fetch_command, process=fetch_result)
+
+        local_crash_dir = receive_dir / "faultlogger"
+        if not local_crash_dir.exists():
+            return CollectResult(
+                command=fetch_command,
+                process=subprocess.CompletedProcess(
+                    fetch_command,
+                    1,
+                    "",
+                    "未找到拉取后的 faultlogger 目录",
+                ),
+            )
+
+        cutoff = datetime.now() - timedelta(days=days)
+        target_files: List[Path] = []
+        for file_path in local_crash_dir.rglob("*"):
+            if not file_path.is_file():
+                continue
+            if "crash" not in file_path.name.lower():
+                continue
+            modified_at = datetime.fromtimestamp(file_path.stat().st_mtime)
+            if modified_at >= cutoff:
+                target_files.append(file_path)
+
+        if not target_files:
+            return CollectResult(
+                command=fetch_command,
+                process=subprocess.CompletedProcess(fetch_command, 0, "", "最近 7 天未匹配到 crash 文件"),
+                file_count=0,
+            )
+
+        zip_path = output_dir / f"harmony_crash_{safe_device_id}_{timestamp}.zip"
+        with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zip_file:
+            for file_path in target_files:
+                arcname = file_path.relative_to(local_crash_dir)
+                zip_file.write(file_path, arcname.as_posix())
 
     return CollectResult(
         command=fetch_command,
@@ -173,7 +188,7 @@ def run_harmony_nextdemo_log_zip(device_id: str, output_dir: Path) -> CollectRes
             )
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        zip_path = output_dir / f"nextdemo_logs_{device_id}_{timestamp}.zip"
+        zip_path = output_dir / f"nextdemo_logs_{_safe_filename_part(device_id)}_{timestamp}.zip"
         with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zip_file:
             for file_path in pulled_files:
                 arcname = file_path.relative_to(temp_base)
