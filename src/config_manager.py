@@ -1,4 +1,5 @@
 import json
+from copy import deepcopy
 from pathlib import Path
 from typing import Any, Dict
 
@@ -13,7 +14,7 @@ DEFAULT_CONFIG = {
 class ConfigManager:
     def __init__(self, config_path: Path) -> None:
         self._config_path = config_path
-        self._config = DEFAULT_CONFIG.copy()
+        self._config = deepcopy(DEFAULT_CONFIG)
         self.load()
 
     @property
@@ -27,7 +28,7 @@ class ConfigManager:
         with self._config_path.open("r", encoding="utf-8") as file:
             self._config = json.load(file)
         for key, value in DEFAULT_CONFIG.items():
-            self._config.setdefault(key, value)
+            self._config.setdefault(key, deepcopy(value))
 
     def save(self) -> None:
         self._config_path.parent.mkdir(parents=True, exist_ok=True)
@@ -44,7 +45,20 @@ class ConfigManager:
         self.save()
 
     def add_apk_need_t(self, apk_name: str) -> None:
+        self.set_apk_need_t(apk_name, True)
+
+    def set_apk_need_t(self, apk_name: str, needs_t: bool) -> bool:
         self._config.setdefault("apk_needs_t", [])
-        if apk_name not in self._config["apk_needs_t"]:
-            self._config["apk_needs_t"].append(apk_name)
+        apk_needs_t = self._config["apk_needs_t"]
+        changed = False
+        if needs_t and apk_name not in apk_needs_t:
+            apk_needs_t.append(apk_name)
+            changed = True
+        elif not needs_t and apk_name in apk_needs_t:
+            self._config["apk_needs_t"] = [
+                remembered_name for remembered_name in apk_needs_t if remembered_name != apk_name
+            ]
+            changed = True
+        if changed:
             self.save()
+        return changed

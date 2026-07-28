@@ -54,6 +54,7 @@ def format_device_ids_for_log(device_ids: Iterable[str], name_mapping: Dict[str,
 
 class App(tk.Tk):
     _DEVICE_LIST_MAX_ROWS = 8
+    _PACKAGE_COMBO_VISIBLE_ROWS = 10
 
     def __init__(self) -> None:
         super().__init__()
@@ -112,7 +113,11 @@ class App(tk.Tk):
         button_frame = ttk.Frame(container)
         button_frame.pack(fill=tk.X, pady=8)
 
-        self.refresh_button = ttk.Button(button_frame, text="刷新设备", command=self.refresh_devices)
+        self.refresh_button = ttk.Button(
+            button_frame,
+            text="刷新设备",
+            command=self.refresh_devices_and_packages,
+        )
         self.refresh_button.pack(side=tk.LEFT)
         self.udid_button = ttk.Button(button_frame, text="获取UDID", command=self.fetch_hdc_udid)
         self.udid_button.pack(side=tk.LEFT, padx=6)
@@ -127,14 +132,20 @@ class App(tk.Tk):
 
         name_frame = ttk.Frame(container)
         name_frame.pack(fill=tk.X, pady=8)
+        name_frame.columnconfigure(1, weight=1)
 
-        ttk.Label(name_frame, text="自定义名称:").pack(side=tk.LEFT)
+        ttk.Label(name_frame, text="自定义名称:").grid(row=0, column=0)
         self.name_var = tk.StringVar()
-        self.name_entry = ttk.Entry(name_frame, textvariable=self.name_var, width=40)
-        self.name_entry.pack(side=tk.LEFT, padx=6)
-        ttk.Button(name_frame, text="保存名称", command=self.save_device_name).pack(side=tk.LEFT)
-        ttk.Button(name_frame, text="复制设备码", command=self.copy_selected_device_id).pack(
-            side=tk.LEFT, padx=(6, 0)
+        self.name_entry = ttk.Entry(name_frame, textvariable=self.name_var)
+        self.name_entry.grid(row=0, column=1, sticky=tk.EW, padx=6)
+        ttk.Button(name_frame, text="保存名称", command=self.save_device_name).grid(
+            row=0,
+            column=2,
+        )
+        ttk.Button(name_frame, text="复制设备码", command=self.copy_selected_device_id).grid(
+            row=0,
+            column=3,
+            padx=(6, 0),
         )
 
         folder_frame = ttk.LabelFrame(container, text="安装包目录")
@@ -142,7 +153,12 @@ class App(tk.Tk):
         self.folder_var = tk.StringVar()
         ttk.Entry(folder_frame, textvariable=self.folder_var).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=6, pady=6)
         ttk.Button(folder_frame, text="选择目录", command=self.choose_folder).pack(side=tk.LEFT, padx=6)
-        ttk.Button(folder_frame, text="扫描最新包", command=self.scan_latest_packages).pack(side=tk.LEFT)
+        self.scan_button = ttk.Button(
+            folder_frame,
+            text="扫描最新包",
+            command=self.refresh_devices_and_packages,
+        )
+        self.scan_button.pack(side=tk.LEFT)
 
         package_frame = ttk.LabelFrame(container, text="最新安装包")
         package_frame.pack(fill=tk.X, pady=8)
@@ -151,23 +167,33 @@ class App(tk.Tk):
         apk_row.pack(fill=tk.X, padx=6, pady=2)
         ttk.Label(apk_row, text="APK:").pack(side=tk.LEFT)
         self.apk_var = tk.StringVar(value="未找到")
-        self.apk_combo = ttk.Combobox(apk_row, textvariable=self.apk_var, state="disabled", width=45)
-        self.apk_combo.pack(side=tk.LEFT, padx=6)
+        self.apk_combo = ttk.Combobox(
+            apk_row,
+            textvariable=self.apk_var,
+            state="disabled",
+            height=self._PACKAGE_COMBO_VISIBLE_ROWS,
+        )
+        self.apk_combo.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=6)
         self.apk_combo.bind("<<ComboboxSelected>>", self.on_apk_selected)
 
         hap_row = ttk.Frame(package_frame)
         hap_row.pack(fill=tk.X, padx=6, pady=2)
         ttk.Label(hap_row, text="HAP:").pack(side=tk.LEFT)
         self.hap_var = tk.StringVar(value="未找到")
-        self.hap_combo = ttk.Combobox(hap_row, textvariable=self.hap_var, state="disabled", width=45)
-        self.hap_combo.pack(side=tk.LEFT, padx=6)
+        self.hap_combo = ttk.Combobox(
+            hap_row,
+            textvariable=self.hap_var,
+            state="disabled",
+            height=self._PACKAGE_COMBO_VISIBLE_ROWS,
+        )
+        self.hap_combo.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=6)
         self.hap_combo.bind("<<ComboboxSelected>>", self.on_hap_selected)
 
         self.apk_test_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(package_frame, text="APK 需要 -t 安装", variable=self.apk_test_var).pack(
             anchor=tk.W, padx=6, pady=2
         )
-        ttk.Button(package_frame, text="记住此 APK 需要 -t", command=self.remember_apk_need_t).pack(
+        ttk.Button(package_frame, text="保存此 APK 的 -t 设置", command=self.remember_apk_need_t).pack(
             anchor=tk.W, padx=6, pady=2
         )
 
@@ -232,6 +258,10 @@ class App(tk.Tk):
         self._log_threadsafe("开始刷新设备列表")
         threading.Thread(target=self._refresh_devices_worker, args=(request_id,), daemon=True).start()
 
+    def refresh_devices_and_packages(self) -> None:
+        self.refresh_devices()
+        self.scan_latest_packages()
+
     def _refresh_devices_worker(self, request_id: int) -> None:
         try:
             devices = detect_devices()
@@ -251,9 +281,17 @@ class App(tk.Tk):
         self.log(f"刷新设备列表失败：{error}")
         self._set_refresh_state(False)
 
-    def _apply_device_refresh(self, devices: List[DeviceInfo]) -> None:
+    def _apply_device_refresh(
+        self,
+        devices: List[DeviceInfo],
+        selection_to_restore: Optional[Iterable[str]] = None,
+    ) -> None:
         current_device_ids = {device.device_id for device in devices}
-        previous_selection = set(self.device_tree.selection())
+        requested_selection = set(
+            self.device_tree.selection()
+            if selection_to_restore is None
+            else selection_to_restore
+        )
         if self.device_ids_before_last_refresh is None:
             ordered_devices = devices
             new_device_ids: Set[str] = set()
@@ -280,7 +318,7 @@ class App(tk.Tk):
             if len(self.devices) == 1:
                 only_device_id = device.device_id
         preserved_selection = [
-            device.device_id for device in self.devices if device.device_id in previous_selection
+            device.device_id for device in self.devices if device.device_id in requested_selection
         ]
         if preserved_selection:
             self.device_tree.selection_set(*preserved_selection)
@@ -474,11 +512,14 @@ class App(tk.Tk):
     def remember_apk_need_t(self) -> None:
         if not self.latest_apk:
             messagebox.showwarning("提示", "未找到 APK")
-            self.log("记住 APK 需要 -t 失败：未找到 APK")
+            self.log("保存 APK 的 -t 设置失败：未找到 APK")
             return
-        self.config_manager.add_apk_need_t(self.latest_apk.name)
-        self.apk_test_var.set(True)
-        self.log(f"已记住 APK 需要 -t: {self.latest_apk.name}")
+        needs_t = bool(self.apk_test_var.get())
+        self.config_manager.set_apk_need_t(self.latest_apk.name, needs_t)
+        if needs_t:
+            self.log(f"已记住 APK 需要 -t: {self.latest_apk.name}")
+        else:
+            self.log(f"已取消 APK 的 -t 记忆: {self.latest_apk.name}")
 
     def install_to_selected(self) -> None:
         if self.installing:
@@ -525,14 +566,18 @@ class App(tk.Tk):
         selected_hap: Optional[Path],
         allow_test: bool,
     ) -> None:
-        self._apply_device_refresh(devices)
+        self._apply_device_refresh(devices, previous_selection)
         current_device_ids = {device.device_id for device in self.devices}
         missing_devices = previous_selection - current_device_ids
         if missing_devices:
             missing_text = self._device_labels_for_log(sorted(missing_devices))
             messagebox.showwarning("提示", f"已选设备已断开: {missing_text}，请确认设备状态")
             self.log(f"安装提示：已选设备断开 {missing_text}")
-        selection_list = [device_id for device_id in previous_selection if device_id in current_device_ids]
+        selection_list = [
+            device.device_id
+            for device in self.devices
+            if device.device_id in previous_selection
+        ]
         if not selection_list:
             if len(self.devices) == 1:
                 selection_list = [self.devices[0].device_id]
@@ -568,6 +613,7 @@ class App(tk.Tk):
     def _set_refresh_state(self, refreshing: bool) -> None:
         state = tk.DISABLED if refreshing else tk.NORMAL
         self.refresh_button.config(state=state)
+        self.scan_button.config(state=state)
 
     def _set_udid_fetch_state(self, fetching: bool) -> None:
         self.udid_fetching = fetching

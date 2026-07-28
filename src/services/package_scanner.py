@@ -11,28 +11,19 @@ class PackageInfo:
     hap_candidates: List[Path]
 
 
-def _latest_file(directory: Path, suffix: str) -> Optional[Path]:
-    candidates = [p for p in directory.glob(f"*{suffix}") if p.is_file()]
-    if not candidates:
-        return None
-    return max(candidates, key=lambda p: p.stat().st_mtime)
-
-
-def _latest_files(directory: Path, suffix: str, limit: int = 5) -> List[Path]:
+def _latest_files(directory: Path, suffix: str) -> List[Path]:
     candidates = [p for p in directory.glob(f"*{suffix}") if p.is_file()]
     if not candidates:
         return []
-    return sorted(candidates, key=lambda p: p.stat().st_mtime, reverse=True)[:limit]
+    return sorted(candidates, key=lambda p: p.stat().st_mtime, reverse=True)
 
 
 def find_latest_packages(directory: Path) -> PackageInfo:
-    apk = _latest_file(directory, ".apk")
-    hap = _latest_file(directory, ".hap")
     apk_candidates = _latest_files(directory, ".apk")
     hap_candidates = _latest_files(directory, ".hap")
     return PackageInfo(
-        apk_path=apk,
-        hap_path=hap,
+        apk_path=apk_candidates[0] if apk_candidates else None,
+        hap_path=hap_candidates[0] if hap_candidates else None,
         apk_candidates=apk_candidates,
         hap_candidates=hap_candidates,
     )
