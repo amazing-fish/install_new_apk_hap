@@ -233,12 +233,15 @@ class App(tk.Tk):
             base_dir = Path.home() / ".config"
         return base_dir / "install_new_apk_hap" / "app_config.json"
 
-    def log(self, message: str) -> None:
-        timestamp = datetime.now().strftime("%H:%M:%S")
+    def _append_log_entry(self, timestamp: str, message: str) -> None:
         self.log_text.configure(state=tk.NORMAL)
         self.log_text.insert(tk.END, f"[{timestamp}] {message}\n")
         self.log_text.see(tk.END)
         self.log_text.configure(state=tk.DISABLED)
+
+    def log(self, message: str) -> None:
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        self._append_log_entry(timestamp, message)
 
     def clear_log(self) -> None:
         self.log_text.configure(state=tk.NORMAL)
@@ -665,10 +668,11 @@ class App(tk.Tk):
         return Path.home() / "install_new_apk_hap_logs"
 
     def _log_threadsafe(self, message: str) -> None:
+        timestamp = datetime.now().strftime("%H:%M:%S")
         if threading.current_thread() is threading.main_thread():
-            self.log(message)
+            self._append_log_entry(timestamp, message)
         else:
-            self.after(0, self.log, message)
+            self.after(0, self._append_log_entry, timestamp, message)
 
     def fetch_crash_log(self) -> None:
         if self.crash_log_fetching:

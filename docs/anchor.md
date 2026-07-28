@@ -20,7 +20,7 @@
 - **安装命令**：
   - Android：`adb -s <device_id> install [-t] <apk>`
   - Harmony：`hdc -t <device_id> install <hap>`
-  - 日志在命令启动前记录完整命令，在命令返回后记录返回码、执行耗时，并逐行保留标准输出和错误输出。
+  - 日志在命令启动前同步冻结完整命令及时间戳，再交由 Tk 主线程按队列渲染；命令返回后记录返回码、执行耗时，并逐行保留标准输出和错误输出。
 - **UDID 获取**：设备列表“获取UDID”按钮支持对 NEXT（Harmony）设备执行 `hdc -t <device_id> shell bm get --udid`；仅在命令返回成功且输出有效时才展示并复制 UDID，Android 设备会提示仅支持 NEXT。
 - **崩溃日志采集**：设备列表“获取崩溃日志”按钮会根据选中设备平台自动分发；Android 执行 `adb -s <device_id> shell dumpsys dropbox --print` 并追加写入日志文件，Harmony 拉取 `/data/log/faultlog/faultlogger` 后筛选最近 7 天含 `crash` 关键字的文件并打包为 zip。
 - **NEXTdemo 日志采集**：设备列表新增“获取NEXTdemo日志”按钮，按相对路径 `haps/entry/files/log-ads` 在 `/data/app` 下匹配目录并打包为 zip。

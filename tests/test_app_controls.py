@@ -1,4 +1,5 @@
 import sys
+from datetime import datetime
 from pathlib import Path
 
 
@@ -54,6 +55,42 @@ def test_refresh_state_controls_both_refresh_entry_points() -> None:
     main.App._set_refresh_state(app, False)
     assert app.refresh_button.settings["state"] == main.tk.NORMAL
     assert app.scan_button.settings["state"] == main.tk.NORMAL
+
+
+def test_threadsafe_log_captures_timestamp_before_tk_callback(monkeypatch) -> None:
+    app = object.__new__(main.App)
+    scheduled_callbacks = []
+    appended_entries = []
+    worker_thread = object()
+    main_thread = object()
+
+    class FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 7, 28, 20, 35, 9)
+
+    app.after = lambda delay, callback, *args: scheduled_callbacks.append(
+        (delay, callback, args)
+    )
+    app._append_log_entry = lambda timestamp, message: appended_entries.append(
+        (timestamp, message)
+    )
+    monkeypatch.setattr(main, "datetime", FixedDateTime)
+    monkeypatch.setattr(main.threading, "current_thread", lambda: worker_thread)
+    monkeypatch.setattr(main.threading, "main_thread", lambda: main_thread)
+
+    main.App._log_threadsafe(app, "Harmony 开始执行命令")
+
+    assert appended_entries == []
+    assert len(scheduled_callbacks) == 1
+    delay, callback, args = scheduled_callbacks[0]
+    assert delay == 0
+    assert args == ("20:35:09", "Harmony 开始执行命令")
+
+    callback(*args)
+    assert appended_entries == [
+        ("20:35:09", "Harmony 开始执行命令"),
+    ]
 
 
 def test_remember_apk_need_t_saves_checked_state() -> None:
