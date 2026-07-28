@@ -82,6 +82,7 @@ def make_app(previous_device_ids, selection=(), names=None):
     app.devices = []
     app.device_ids_before_last_refresh = previous_device_ids
     app.refresh_button = FakeButton()
+    app.scan_button = FakeButton()
     app.logged_messages = []
     app.log = app.logged_messages.append
     return app
@@ -167,6 +168,68 @@ def test_apply_device_refresh_preserves_still_connected_selection() -> None:
     assert app.device_tree.order == ["new-harmony", "old-android", "old-harmony"]
     assert app.device_tree.selection() == ("old-harmony",)
     assert app.name_var.value == "Mate 70"
+
+
+def test_apply_device_refresh_restores_explicit_multi_device_install_snapshot() -> None:
+    app = make_app(
+        previous_device_ids={"android-a", "android-b", "harmony-c"},
+        selection=(),
+    )
+    devices = [
+        DeviceInfo(device_id="android-a", platform="android", status="device"),
+        DeviceInfo(device_id="android-b", platform="android", status="device"),
+        DeviceInfo(device_id="harmony-c", platform="harmony", status="device"),
+    ]
+
+    main.App._apply_device_refresh(
+        app,
+        devices,
+        selection_to_restore={"android-a", "harmony-c"},
+    )
+
+    assert app.device_tree.selection() == ("android-a", "harmony-c")
+
+
+def test_finalize_install_restores_snapshot_and_keeps_target_order(monkeypatch) -> None:
+    app = make_app(
+        previous_device_ids={"android-a", "android-b", "harmony-c"},
+        selection=(),
+    )
+    devices = [
+        DeviceInfo(device_id="android-a", platform="android", status="device"),
+        DeviceInfo(device_id="android-b", platform="android", status="device"),
+        DeviceInfo(device_id="harmony-c", platform="harmony", status="device"),
+    ]
+    started_threads = []
+
+    class FakeThread:
+        def __init__(self, *, target, args, daemon) -> None:
+            self.target = target
+            self.args = args
+            self.daemon = daemon
+
+        def start(self) -> None:
+            started_threads.append(self)
+
+    monkeypatch.setattr(main.threading, "Thread", FakeThread)
+
+    main.App._finalize_install(
+        app,
+        devices,
+        previous_selection={"android-a", "harmony-c"},
+        selected_apk=Path("demo.apk"),
+        selected_hap=Path("demo.hap"),
+        allow_test=True,
+    )
+
+    assert app.device_tree.selection() == ("android-a", "harmony-c")
+    assert len(started_threads) == 1
+    assert started_threads[0].args == (
+        ["android-a", "harmony-c"],
+        Path("demo.apk"),
+        Path("demo.hap"),
+        True,
+    )
 
 
 def test_stale_refresh_result_does_not_replace_newer_device_list() -> None:
