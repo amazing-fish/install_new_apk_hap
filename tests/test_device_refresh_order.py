@@ -1,4 +1,6 @@
 import sys
+import subprocess
+import threading
 from pathlib import Path
 
 
@@ -6,6 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import main
 from services.device_detector import DeviceInfo
+from services.installer import InstallResult
 
 
 class FakeTree:
@@ -220,6 +223,7 @@ def test_finalize_install_restores_snapshot_and_keeps_target_order(monkeypatch) 
         selected_apk=Path("demo.apk"),
         selected_hap=Path("demo.hap"),
         allow_test=True,
+        validation_duration_seconds=1.25,
     )
 
     assert app.device_tree.selection() == ("android-a", "harmony-c")
@@ -230,6 +234,59 @@ def test_finalize_install_restores_snapshot_and_keeps_target_order(monkeypatch) 
         Path("demo.hap"),
         True,
     )
+    assert app.logged_messages[0].startswith(
+        "安装前设备校验完成（耗时 1.25 秒）："
+    )
+
+
+def test_install_worker_logs_command_before_harmony_result(monkeypatch) -> None:
+    app = object.__new__(main.App)
+    app.devices = [
+        DeviceInfo(device_id="harmony-device", platform="harmony", status="device"),
+    ]
+    app.install_stop_event = threading.Event()
+    app.config_manager = FakeConfig(names={"harmony-device": "Mate 70"})
+    app.logged_messages = []
+    app._log_threadsafe = app.logged_messages.append
+    app.after = lambda *_args: None
+    hap_path = Path("Harmony release.hap")
+
+    def fake_install_harmony(device_id, selected_hap, stop_event):
+        assert device_id == "harmony-device"
+        assert selected_hap == hap_path
+        assert stop_event is app.install_stop_event
+        assert "开始执行命令" in app.logged_messages[-1]
+        return InstallResult(
+            command=["hdc", "-t", device_id, "install", str(selected_hap)],
+            process=subprocess.CompletedProcess(
+                args=[],
+                returncode=0,
+                stdout="[Info]install bundle successfully.\nAppMod finish",
+                stderr="",
+            ),
+            duration_seconds=15.236,
+        )
+
+    monkeypatch.setattr(main, "install_harmony", fake_install_harmony)
+
+    main.App._install_worker(
+        app,
+        ["harmony-device"],
+        selected_apk=None,
+        selected_hap=hap_path,
+        allow_test=False,
+    )
+
+    assert app.logged_messages == [
+        "开始安装到所选设备: Mate 70",
+        (
+            "Harmony Mate 70 开始执行命令: "
+            'hdc -t harmony-device install "Harmony release.hap"'
+        ),
+        "Harmony Mate 70 安装结果: 0，耗时 15.24 秒",
+        "Harmony Mate 70 输出: [Info]install bundle successfully.",
+        "Harmony Mate 70 输出: AppMod finish",
+    ]
 
 
 def test_stale_refresh_result_does_not_replace_newer_device_list() -> None:

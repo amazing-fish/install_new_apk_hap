@@ -1,5 +1,7 @@
 import os
+import subprocess
 import threading
+import time
 import tkinter as tk
 from dataclasses import dataclass
 from datetime import datetime
@@ -10,6 +12,9 @@ from typing import Dict, Iterable, List, Optional, Set, Tuple
 from config_manager import ConfigManager
 from services.device_detector import DeviceInfo, detect_devices, get_hdc_device_udid
 from services.installer import (
+    InstallResult,
+    build_android_install_command,
+    build_harmony_install_command,
     install_android,
     install_harmony,
     run_android_dropbox_dump,
@@ -50,6 +55,10 @@ def get_device_display_name(device_id: str, name_mapping: Dict[str, str]) -> str
 
 def format_device_ids_for_log(device_ids: Iterable[str], name_mapping: Dict[str, str]) -> str:
     return "，".join(get_device_display_name(device_id, name_mapping) for device_id in device_ids)
+
+
+def format_command_for_log(command: Iterable[str]) -> str:
+    return subprocess.list2cmdline(list(command))
 
 
 class App(tk.Tk):
@@ -224,12 +233,15 @@ class App(tk.Tk):
             base_dir = Path.home() / ".config"
         return base_dir / "install_new_apk_hap" / "app_config.json"
 
-    def log(self, message: str) -> None:
-        timestamp = datetime.now().strftime("%H:%M:%S")
+    def _append_log_entry(self, timestamp: str, message: str) -> None:
         self.log_text.configure(state=tk.NORMAL)
         self.log_text.insert(tk.END, f"[{timestamp}] {message}\n")
         self.log_text.see(tk.END)
         self.log_text.configure(state=tk.DISABLED)
+
+    def log(self, message: str) -> None:
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        self._append_log_entry(timestamp, message)
 
     def clear_log(self) -> None:
         self.log_text.configure(state=tk.NORMAL)
@@ -285,6 +297,7 @@ class App(tk.Tk):
         self,
         devices: List[DeviceInfo],
         selection_to_restore: Optional[Iterable[str]] = None,
+        summary_label: str = "设备列表已刷新",
     ) -> None:
         current_device_ids = {device.device_id for device in devices}
         requested_selection = set(
@@ -335,10 +348,10 @@ class App(tk.Tk):
         harmony_count = sum(1 for device in self.devices if device.platform == "harmony")
         total_count = len(self.devices)
         if total_count == 0:
-            self.log("设备列表已刷新：未检测到设备")
+            self.log(f"{summary_label}：未检测到设备")
         else:
             self.log(
-                "设备列表已刷新："
+                f"{summary_label}："
                 f"Android {android_count} 台, Harmony {harmony_count} 台, 总计 {total_count} 台"
             )
             if new_device_ids:
@@ -533,6 +546,18 @@ class App(tk.Tk):
         selected_apk = self.latest_apk
         selected_hap = self.latest_hap
         allow_test = self.apk_test_var.get()
+        selected_device_text = (
+            self._device_labels_for_log(sorted(previous_selection))
+            if previous_selection
+            else "未选择（单设备时将自动选择）"
+        )
+        apk_text = selected_apk.name if selected_apk else "未找到"
+        hap_text = selected_hap.name if selected_hap else "未找到"
+        self.log(
+            "收到安装请求："
+            f"设备={selected_device_text}，APK={apk_text}，HAP={hap_text}"
+        )
+        self.log("开始安装前设备校验")
         self._set_install_state(True)
         threading.Thread(
             target=self._prepare_install_worker,
@@ -547,7 +572,9 @@ class App(tk.Tk):
         selected_hap: Optional[Path],
         allow_test: bool,
     ) -> None:
+        started_at = time.perf_counter()
         devices = detect_devices()
+        duration_seconds = time.perf_counter() - started_at
         self.after(
             0,
             self._finalize_install,
@@ -556,6 +583,7 @@ class App(tk.Tk):
             selected_apk,
             selected_hap,
             allow_test,
+            duration_seconds,
         )
 
     def _finalize_install(
@@ -565,8 +593,16 @@ class App(tk.Tk):
         selected_apk: Optional[Path],
         selected_hap: Optional[Path],
         allow_test: bool,
+        validation_duration_seconds: float = 0.0,
     ) -> None:
-        self._apply_device_refresh(devices, previous_selection)
+        self._apply_device_refresh(
+            devices,
+            previous_selection,
+            summary_label=(
+                "安装前设备校验完成"
+                f"（耗时 {validation_duration_seconds:.2f} 秒）"
+            ),
+        )
         current_device_ids = {device.device_id for device in self.devices}
         missing_devices = previous_selection - current_device_ids
         if missing_devices:
@@ -632,10 +668,11 @@ class App(tk.Tk):
         return Path.home() / "install_new_apk_hap_logs"
 
     def _log_threadsafe(self, message: str) -> None:
+        timestamp = datetime.now().strftime("%H:%M:%S")
         if threading.current_thread() is threading.main_thread():
-            self.log(message)
+            self._append_log_entry(timestamp, message)
         else:
-            self.after(0, self.log, message)
+            self.after(0, self._append_log_entry, timestamp, message)
 
     def fetch_crash_log(self) -> None:
         if self.crash_log_fetching:
@@ -855,27 +892,33 @@ class App(tk.Tk):
                     if not selected_apk:
                         self._log_threadsafe(f"{device_label}: 未找到 APK，跳过")
                         continue
+                    command = build_android_install_command(
+                        device_id,
+                        selected_apk,
+                        allow_test,
+                    )
+                    self._log_threadsafe(
+                        f"Android {device_label} 开始执行命令: "
+                        f"{format_command_for_log(command)}"
+                    )
                     result = install_android(
                         device_id,
                         selected_apk,
                         allow_test,
                         self.install_stop_event,
                     )
-                    self._log_threadsafe(f"Android {device_label} 执行命令: {' '.join(result.command)}")
-                    self._log_threadsafe(
-                        f"Android {device_label} 安装结果: {result.process.returncode}\n"
-                        f"{result.process.stdout}\n{result.process.stderr}"
-                    )
+                    self._log_install_result("Android", device_label, result)
                 else:
                     if not selected_hap:
                         self._log_threadsafe(f"{device_label}: 未找到 HAP，跳过")
                         continue
-                    result = install_harmony(device_id, selected_hap, self.install_stop_event)
-                    self._log_threadsafe(f"Harmony {device_label} 执行命令: {' '.join(result.command)}")
+                    command = build_harmony_install_command(device_id, selected_hap)
                     self._log_threadsafe(
-                        f"Harmony {device_label} 安装结果: {result.process.returncode}\n"
-                        f"{result.process.stdout}\n{result.process.stderr}"
+                        f"Harmony {device_label} 开始执行命令: "
+                        f"{format_command_for_log(command)}"
                     )
+                    result = install_harmony(device_id, selected_hap, self.install_stop_event)
+                    self._log_install_result("Harmony", device_label, result)
                 if self.install_stop_event.is_set():
                     cancelled_by_user = True
                     self._log_threadsafe(f"{device_label}: 安装已中止")
@@ -889,6 +932,21 @@ class App(tk.Tk):
             elif cancelled_by_user:
                 self.after(0, self.install_status_var.set, "正在中止")
             self.after(0, self._set_install_state, False)
+
+    def _log_install_result(
+        self,
+        platform: str,
+        device_label: str,
+        result: InstallResult,
+    ) -> None:
+        self._log_threadsafe(
+            f"{platform} {device_label} 安装结果: {result.process.returncode}，"
+            f"耗时 {result.duration_seconds:.2f} 秒"
+        )
+        for line in result.process.stdout.splitlines():
+            self._log_threadsafe(f"{platform} {device_label} 输出: {line}")
+        for line in result.process.stderr.splitlines():
+            self._log_threadsafe(f"{platform} {device_label} 错误输出: {line}")
 
     def request_stop_install(self) -> None:
         if not self.installing:

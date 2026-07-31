@@ -1,6 +1,7 @@
 import os
 import subprocess
 import tempfile
+import time
 import zipfile
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -13,6 +14,7 @@ from typing import List, Optional
 class InstallResult:
     command: List[str]
     process: subprocess.CompletedProcess
+    duration_seconds: float
 
 
 @dataclass
@@ -45,6 +47,7 @@ def _run_install_command(command: List[str], stop_event: Optional[threading.Even
     run_kwargs = {"stdout": subprocess.PIPE, "stderr": subprocess.PIPE, "text": True}
     if os.name == "nt":
         run_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+    started_at = time.perf_counter()
     process = subprocess.Popen(command, **run_kwargs)
     while True:
         if stop_event and stop_event.is_set():
@@ -55,14 +58,22 @@ def _run_install_command(command: List[str], stop_event: Optional[threading.Even
                 process.kill()
                 stdout, stderr = process.communicate()
             completed = subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
-            return InstallResult(command=command, process=completed)
+            return InstallResult(
+                command=command,
+                process=completed,
+                duration_seconds=time.perf_counter() - started_at,
+            )
         try:
             process.wait(timeout=0.2)
         except subprocess.TimeoutExpired:
             continue
         stdout, stderr = process.communicate()
         completed = subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
-        return InstallResult(command=command, process=completed)
+        return InstallResult(
+            command=command,
+            process=completed,
+            duration_seconds=time.perf_counter() - started_at,
+        )
 
 
 def run_android_dropbox_dump(device_id: str, log_path: Path) -> CommandResult:
@@ -202,17 +213,35 @@ def run_harmony_nextdemo_log_zip(device_id: str, output_dir: Path) -> CollectRes
     )
 
 
+def build_android_install_command(
+    device_id: str,
+    apk_path: Path,
+    allow_test: bool,
+) -> List[str]:
+    command: List[str] = ["adb", "-s", device_id, "install"]
+    if allow_test:
+        command.append("-t")
+    command.append(str(apk_path))
+    return command
+
+
 def install_android(
     device_id: str,
     apk_path: Path,
     allow_test: bool,
     stop_event: Optional[threading.Event] = None,
 ) -> InstallResult:
-    command: List[str] = ["adb", "-s", device_id, "install"]
-    if allow_test:
-        command.append("-t")
-    command.append(str(apk_path))
-    return _run_install_command(command, stop_event)
+    return _run_install_command(
+        build_android_install_command(device_id, apk_path, allow_test),
+        stop_event,
+    )
+
+
+def build_harmony_install_command(
+    device_id: str,
+    hap_path: Path,
+) -> List[str]:
+    return ["hdc", "-t", device_id, "install", str(hap_path)]
 
 
 def install_harmony(
@@ -220,5 +249,7 @@ def install_harmony(
     hap_path: Path,
     stop_event: Optional[threading.Event] = None,
 ) -> InstallResult:
-    command = ["hdc", "-t", device_id, "install", str(hap_path)]
-    return _run_install_command(command, stop_event)
+    return _run_install_command(
+        build_harmony_install_command(device_id, hap_path),
+        stop_event,
+    )
