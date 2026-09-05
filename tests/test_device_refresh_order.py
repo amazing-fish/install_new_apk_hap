@@ -81,6 +81,8 @@ def make_app(previous_device_ids, selection=(), names=None):
     app = object.__new__(main.App)
     app.device_tree = FakeTree(selection=selection)
     app.name_var = FakeVar()
+    app.device_summary_var = FakeVar()
+    app.selected_device_summary_var = FakeVar()
     app.config_manager = FakeConfig(names=names)
     app.devices = []
     app.device_ids_before_last_refresh = previous_device_ids

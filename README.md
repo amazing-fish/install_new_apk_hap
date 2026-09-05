@@ -7,6 +7,7 @@
 - 扫描指定目录最新 apk/hap
 - 支持 apk `-t` 安装规则记忆
 - 设备自定义命名
+- 设备统计、已选设备和当前 APK/HAP 摘要随刷新、选择和命名同步更新
 - Harmony 最近 7 天崩溃日志 zip 打包
 - NEXTdemo 日志（`haps/entry/files/log-ads`）zip 打包
 - 可视化界面
@@ -24,3 +25,9 @@ python3 src/main.py
 - 版本号文件：`VERSION`
 - 变更记录：`CHANGELOG.md`
 - 技术路径稳定说明：`docs/anchor.md`
+- UI 阶段计划与进展：`docs/ui_refactor_tracking.md`
+
+## 开发验证
+安装 `pytest` 后运行 `python -m pytest -q -p no:cacheprovider`。
+测试包含真实 Tk 控件和事件检查，需要带 Tkinter 和桌面显示的 Python 环境；设备命令使用替身，配置写入测试临时目录。
+PR 和主线提交会运行 Windows 测试检查；exe 打包仍通过原有手动/tag 流程触发。
