@@ -47,6 +47,24 @@ def test_resolved_aapt_label_is_text_not_a_resource_reference(monkeypatch, name)
     assert result.name == name and result.status == 'resolved'
 
 
+@pytest.mark.parametrize('control', ['\u202e', '\u2066', '\u200f', '\u061c', '\u0085', '\u2028', '\u2029'])
+def test_untrusted_label_controls_cannot_reorder_or_hide_filename(monkeypatch, tmp_path, control):
+    name = f'Label{control}spoof'
+    path = hap(tmp_path, {'app': {'label': name}})
+    result = read_package_label(path, MetadataTools())
+    assert result.status == 'invalid' and result.name is None
+    display = next(iter(package_display_labels([path], {path: result})))
+    assert control not in display and path.name in display
+    monkeypatch.setattr(metadata, '_run_tool', lambda command: f"application-label:'{name}'\r\n")
+    apk = read_package_label(FIXTURES/'compiled.apk', MetadataTools(aapt2='aapt2'))
+    assert apk.name is None and apk.status in ('invalid', 'missing')
+
+
+def test_ordinary_rtl_letters_are_valid_label_text(tmp_path):
+    name = 'مرحبا'
+    assert read_package_label(hap(tmp_path, {'app': {'label': name}}), MetadataTools()).name == name
+
+
 @pytest.mark.parametrize('document,status,name', [
     ({'app': {'label': '测试工具'}, 'module': {'name': 'entry'}}, 'resolved', '测试工具'),
     ({'app': {'label': '@Home'}}, 'resolved', '@Home'),

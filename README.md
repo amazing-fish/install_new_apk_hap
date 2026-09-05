@@ -32,7 +32,7 @@ UDID 与 NEXTdemo 日志仅对单选 Harmony 设备启用；崩溃日志支持�
 - APK：使用 Android SDK 的 `aapt2 dump badging` 读取默认 `application-label`，支持编译资源引用。依次寻找 `AAPT2_EXECUTABLE`、PATH、`ANDROID_SDK_ROOT` / `ANDROID_HOME` 中最高稳定版本的 `build-tools`。
 - HAP Stage：读取 `module.json` 的 `app.label`；FA：读取 `config.json` 中 `module.mainAbility` 精确对应 Ability 的 `label`。字面名称无需 SDK；`$string:xxx` 由 `restool dump` 读取 `resources.index` 的默认值，存在 `labelId` 时同时校验 ID。依次寻找 `RESTOOL_EXECUTABLE`、PATH、已解析 HDC 同目录的 restool。
 - 两个可执行文件环境变量都是可选的完整路径；显式路径无效时不换用其他版本。exe 不捆绑 SDK，也不自动下载工具。缺少工具会显示 `[缺少 aapt2]` / `[缺少 restool]`，仍可按文件名选择和安装。
-- 本轮采用包的默认名称，不模拟设备语言。只有本地化值、别名/跨包引用、未知 JSON5/pack.info 格式均不猜测；下拉框区分资源未解析、未声明名称、格式不支持、读取失败与读取受限。模块 `name`、bundleName 和文件名不作为解析成功。
+- 本轮采用包的默认名称，不模拟设备语言。只有本地化值、别名/跨包引用、未知 JSON5/pack.info 格式均不猜测；下拉框区分资源未解析、未声明名称、格式不支持、读取失败与读取受限。模块 `name`、bundleName 和文件名不作为解析成功。名称中的控制字符、方向/格式控制符和段落分隔符会按读取失败处理，避免干扰真实文件名显示。
 
 元数据读取由单个后台线程执行；新扫描替换等待中的旧请求，过期目录结果丢弃。缓存最多 256 项，按文件和解析工具的路径、大小、纳秒时间及文件身份失效；读取失败下次刷新重试。名称更新不改当前选择，不追加逐包日志。单工具调用最长 5 秒、输出最多 4 MiB；ZIP 目录/JSON/manifest 最多 1 MiB、资源表最多 32 MiB，不将包内文件解压执行。
 

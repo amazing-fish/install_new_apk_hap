@@ -13,6 +13,7 @@ import struct
 import subprocess
 import tempfile
 import time
+import unicodedata
 import zipfile
 import zlib
 
@@ -153,7 +154,7 @@ def _literal(value: object, source: str, *, references: bool = False) -> Package
     if references and re.match(r'^\$[A-Za-z_][A-Za-z_0-9]*:', text):
         return PackageLabel(status='unresolved', source=source)
     # Untrusted text must not introduce control characters or a huge UI label.
-    if len(text) > 200 or any(ord(c) < 32 or ord(c) == 127 for c in text):
+    if len(text) > 200 or any(unicodedata.category(c) in ('Cc', 'Cf', 'Cs', 'Zl', 'Zp') for c in text):
         return PackageLabel(status='invalid', source=source)
     return PackageLabel(text, 'resolved', source)
 
