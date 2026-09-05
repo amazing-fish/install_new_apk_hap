@@ -554,7 +554,7 @@ class App(tk.Tk):
             if device.device_id in previous_selection
         ]
         if not selection_list:
-            if len(self.devices) == 1:
+            if len(self.devices) == 1 and not harmony_error:
                 selection_list = [self.devices[0].device_id]
                 self.device_tree.selection_set(selection_list[0])
                 self.on_device_select(None)
