@@ -31,8 +31,8 @@
 | --- | --- | --- | --- |
 | 1 | [#32 状态接入](https://github.com/amazing-fish/install_new_apk_hap/issues/32) | 已由 PR #49 合入；Issue 已关闭 | 列顺序、统计、选择/命名、包摘要、真实 Tk 回归与 PR 检查 |
 | 2 | [#33 布局与样式拆分](https://github.com/amazing-fish/install_new_apk_hap/issues/33) | PR #50 已合入；Issue 已关闭 | 布局/样式独立归属，App 保留状态和任务编排，行为不漂移 |
-| 3 | [#34 体验与窄窗口可达性](https://github.com/amazing-fish/install_new_apk_hap/issues/34) | 本分支实施；PR 与构建状态见 Issue #34 | 工作流组织、平台/忙碌状态、长内容/多设备滚动与窗口走查 |
-| 独立后续 | [#47 HDC 路径统一](https://github.com/amazing-fish/install_new_apk_hap/issues/47) | 已建档，未实施 | 共享可执行路径覆盖探测、UDID、安装及所有 Harmony 日志动作 |
+| 3 | [#34 体验与窄窗口可达性](https://github.com/amazing-fish/install_new_apk_hap/issues/34) | PR #51 已合入；Issue #34 已关闭 | 工作流组织、平台/忙碌状态、长内容/多设备滚动与窗口走查 |
+| 独立后续 | [#47 HDC 路径统一](https://github.com/amazing-fish/install_new_apk_hap/issues/47) | [PR #52](https://github.com/amazing-fish/install_new_apk_hap/pull/52) 实施；从 a6a9ffe 主线开始 | 共享可执行路径覆盖探测、UDID、安装及所有 Harmony 日志动作 |
 | 后续候选 | [#48 应用名解析](https://github.com/amazing-fish/install_new_apk_hap/issues/48) | 已建档，未实施 | 解析证据、显示标签与文件身份分离、损坏/重名/切换测试 |
 
 第一阶段只迁移显示格式化并接入摘要；保持安装命令、配置 schema、发布版本、刷新联动、全量候选、安装快照及日志时序。执行区和状态栏共享一个当前选择摘要；包摘要显示当前选择，已开始安装的参数仍以点击快照与请求日志为准。
@@ -63,3 +63,10 @@
 - 相同设备和安装包刷新结果不再重复刷日志，文件大小/修改时间/候选或设备状态变化仍记录；错误、恢复、清空日志后的首条结果、安装前校验和安装日志均有聚焦回归。
 - 已保留刷新排序、选择恢复、安装点击快照、配置与日志时序回归；Windows 样例截图用于界面走查。Tk scaling 参数测试不等同于所有系统 DPI 或多显示器组合的人工验收。
 - VERSION 更新为 v0.6.0，分支 exe 构建及 PR 检查结果记录在 Issue #34 / 对应 PR；尚未合入或发布的构建不计为正式 Release。未进行真机安装，不扩展 #47/#48。
+
+## HDC 独立后续（Issue #47）
+
+- UI 三阶段 PR #51 于 2026-09-05T17:14:35Z 合入，merge `a6a9ffe5baa46dbfc6dd6909b3cf4f1495d091e1`；Issue #34 已关闭，四行设备区保持主线布局。
+- 新分支从该主线承接 #47：共享 HDC 解析入口覆盖探测、UDID、安装、crash 和 NEXTdemo；显式路径无效不回退，探测诊断与空列表分离，保留 Android 可用性。
+- 安装前 Harmony 探测失败不改装到其他平台；安装日志与执行固定同一路径，多步日志采集也只解析一次；NEXTdemo 拉取失败不再当作空结果成功。
+- 版本递增为待发布 v0.7.0，PR、Windows CI、Codex review 与 exe 证据登记在 Issue #47；未合入或正式发布。#48 应用名解析仍为下一候选。

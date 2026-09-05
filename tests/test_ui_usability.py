@@ -202,7 +202,8 @@ def test_platform_actions_follow_selection_and_busy_completion(app):
 def test_install_status_distinguishes_failure_cancel_and_skips(app, monkeypatch, outcome, status):
     app._apply_device_refresh([DeviceInfo('h','harmony','device')])
     app._set_install_state(True)
-    def install(*args):
+    def install(*args, hdc_executable):
+        assert hdc_executable
         if outcome == 'raise':
             raise RuntimeError('failed command')
         if outcome == 'stop':

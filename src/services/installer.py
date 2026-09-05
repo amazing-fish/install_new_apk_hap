@@ -9,6 +9,8 @@ from pathlib import Path
 import threading
 from typing import List, Optional
 
+from services.hdc import resolve_hdc_executable
+
 
 @dataclass
 class InstallResult:
@@ -94,18 +96,19 @@ def _run_command(command: List[str]) -> subprocess.CompletedProcess:
         run_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
     try:
         return subprocess.run(command, **run_kwargs)
-    except FileNotFoundError as error:
+    except OSError as error:
         return _command_error_result(command, error)
 
 
 def run_harmony_recent_crash_zip(device_id: str, output_dir: Path, days: int = 7) -> CollectResult:
+    hdc = resolve_hdc_executable()
     remote_crash_dir = "/data/log/faultlog/faultlogger"
     output_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     safe_device_id = _safe_filename_part(device_id)
     with tempfile.TemporaryDirectory(prefix=f"harmony_crash_{safe_device_id}_", dir=output_dir) as temp_dir:
         receive_dir = Path(temp_dir)
-        fetch_command = ["hdc", "-t", device_id, "file", "recv", remote_crash_dir, str(receive_dir)]
+        fetch_command = [hdc, "-t", device_id, "file", "recv", remote_crash_dir, str(receive_dir)]
         fetch_result = _run_command(fetch_command)
         if fetch_result.returncode != 0:
             return CollectResult(command=fetch_command, process=fetch_result)
@@ -155,9 +158,10 @@ def run_harmony_recent_crash_zip(device_id: str, output_dir: Path, days: int = 7
 
 
 def run_harmony_nextdemo_log_zip(device_id: str, output_dir: Path) -> CollectResult:
+    hdc = resolve_hdc_executable()
     output_dir.mkdir(parents=True, exist_ok=True)
     find_command = [
-        "hdc",
+        hdc,
         "-t",
         device_id,
         "shell",
@@ -184,10 +188,10 @@ def run_harmony_nextdemo_log_zip(device_id: str, output_dir: Path) -> CollectRes
         temp_base = Path(temp_dir)
         for index, remote_dir in enumerate(remote_dirs, start=1):
             receive_target = temp_base / f"log_ads_{index}"
-            recv_command = ["hdc", "-t", device_id, "file", "recv", remote_dir, str(receive_target)]
+            recv_command = [hdc, "-t", device_id, "file", "recv", remote_dir, str(receive_target)]
             recv_result = _run_command(recv_command)
             if recv_result.returncode != 0:
-                continue
+                return CollectResult(command=recv_command, process=recv_result)
             for file_path in receive_target.rglob("*"):
                 if file_path.is_file():
                     pulled_files.append(file_path)
@@ -240,16 +244,18 @@ def install_android(
 def build_harmony_install_command(
     device_id: str,
     hap_path: Path,
+    hdc_executable: Optional[str] = None,
 ) -> List[str]:
-    return ["hdc", "-t", device_id, "install", str(hap_path)]
+    return [hdc_executable or resolve_hdc_executable(), "-t", device_id, "install", str(hap_path)]
 
 
 def install_harmony(
     device_id: str,
     hap_path: Path,
     stop_event: Optional[threading.Event] = None,
+    hdc_executable: Optional[str] = None,
 ) -> InstallResult:
     return _run_install_command(
-        build_harmony_install_command(device_id, hap_path),
+        build_harmony_install_command(device_id, hap_path, hdc_executable),
         stop_event,
     )

@@ -251,7 +251,7 @@ def test_finalize_install_restores_snapshot_and_keeps_target_order(monkeypatch) 
     )
 
 
-def test_install_worker_logs_command_before_harmony_result(monkeypatch) -> None:
+def test_install_worker_logs_command_before_harmony_result(monkeypatch, hdc_executable) -> None:
     app = object.__new__(main.App)
     app.devices = [
         DeviceInfo(device_id="harmony-device", platform="harmony", status="device"),
@@ -263,7 +263,8 @@ def test_install_worker_logs_command_before_harmony_result(monkeypatch) -> None:
     app.after = lambda *_args: None
     hap_path = Path("Harmony release.hap")
 
-    def fake_install_harmony(device_id, selected_hap, stop_event):
+    def fake_install_harmony(device_id, selected_hap, stop_event, **kwargs):
+        assert kwargs['hdc_executable'] == hdc_executable
         assert device_id == "harmony-device"
         assert selected_hap == hap_path
         assert stop_event is app.install_stop_event
@@ -293,7 +294,7 @@ def test_install_worker_logs_command_before_harmony_result(monkeypatch) -> None:
         "开始安装到所选设备: Mate 70",
         (
             "Harmony Mate 70 开始执行命令: "
-            'hdc -t harmony-device install "Harmony release.hap"'
+            f'"{hdc_executable}" -t harmony-device install "Harmony release.hap"'
         ),
         "Harmony Mate 70 安装结果: 0，耗时 15.24 秒",
         "Harmony Mate 70 输出: [Info]install bundle successfully.",

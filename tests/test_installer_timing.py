@@ -20,7 +20,7 @@ class FakeProcess:
         return "installed", ""
 
 
-def test_install_result_records_elapsed_time(monkeypatch) -> None:
+def test_install_result_records_elapsed_time(monkeypatch, hdc_executable) -> None:
     clock = iter([10.0, 12.345])
     monkeypatch.setattr(installer.time, "perf_counter", lambda: next(clock))
     monkeypatch.setattr(subprocess, "Popen", lambda *_args, **_kwargs: FakeProcess())
@@ -31,7 +31,7 @@ def test_install_result_records_elapsed_time(monkeypatch) -> None:
     )
 
     assert result.command == [
-        "hdc",
+        hdc_executable,
         "-t",
         "harmony-device",
         "install",

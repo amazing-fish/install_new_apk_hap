@@ -3,12 +3,20 @@ import subprocess
 from dataclasses import dataclass
 from typing import List, Optional
 
+from services.hdc import HdcError, resolve_hdc_executable
+
 
 @dataclass
 class DeviceInfo:
     device_id: str
     platform: str
     status: str
+
+
+@dataclass
+class DeviceDetectionResult:
+    devices: List[DeviceInfo]
+    harmony_error: Optional[str] = None
 
 
 def _is_device_diagnostic_line(line: str) -> bool:
@@ -61,7 +69,7 @@ def detect_adb_devices() -> List[DeviceInfo]:
 
 
 def detect_hdc_devices() -> List[DeviceInfo]:
-    output = _run_command(["hdc", "list", "targets"])
+    output = _run_hdc_command([resolve_hdc_executable(), "list", "targets"])
     devices: List[DeviceInfo] = []
     if not output:
         return devices
@@ -78,11 +86,16 @@ def detect_hdc_devices() -> List[DeviceInfo]:
     return devices
 
 
-def detect_devices() -> List[DeviceInfo]:
-    return detect_adb_devices() + detect_hdc_devices()
+def detect_devices() -> DeviceDetectionResult:
+    devices = detect_adb_devices()
+    try:
+        devices += detect_hdc_devices()
+    except HdcError as error:
+        return DeviceDetectionResult(devices, str(error))
+    return DeviceDetectionResult(devices)
 
 
-def get_hdc_device_udid(device_id: str) -> Optional[str]:
+def _run_hdc_command(command: List[str]) -> str:
     run_kwargs = {
         "check": False,
         "capture_output": True,
@@ -92,14 +105,22 @@ def get_hdc_device_udid(device_id: str) -> Optional[str]:
         run_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
     try:
         result = subprocess.run(
-            ["hdc", "-t", device_id, "shell", "bm", "get", "--udid"],
+            command,
             **run_kwargs,
         )
-    except FileNotFoundError:
-        return None
-    if result.returncode != 0:
-        return None
-    output = result.stdout.strip()
+    except OSError as error:
+        raise HdcError(f'HDC 无法执行：{subprocess.list2cmdline(command)} ({error})') from error
+    failed_output = any(line.lstrip().startswith('[Fail]') for line in (result.stdout + '\n' + result.stderr).splitlines())
+    if result.returncode != 0 or failed_output:
+        raise HdcError(
+            f'HDC 命令失败（返回码 {result.returncode}）：{subprocess.list2cmdline(command)}\n'
+            f'{result.stdout.strip()}\n{result.stderr.strip()}'
+        )
+    return result.stdout.strip()
+
+
+def get_hdc_device_udid(device_id: str) -> Optional[str]:
+    output = _run_hdc_command([resolve_hdc_executable(), "-t", device_id, "shell", "bm", "get", "--udid"])
     if not output:
         return None
     lines = [line.strip() for line in output.splitlines() if line.strip()]

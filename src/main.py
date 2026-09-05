@@ -151,16 +151,19 @@ class App(tk.Tk):
 
     def _refresh_devices_worker(self, request_id: int) -> None:
         try:
-            devices = detect_devices()
+            detection = detect_devices()
         except Exception as error:
             self.after(0, self._apply_device_refresh_error, request_id, error)
             return
-        self.after(0, self._apply_device_refresh_result, request_id, devices)
+        self.after(0, self._apply_device_refresh_result, request_id, detection.devices, detection.harmony_error)
 
-    def _apply_device_refresh_result(self, request_id: int, devices: List[DeviceInfo]) -> None:
+    def _apply_device_refresh_result(self, request_id: int, devices: List[DeviceInfo], harmony_error: Optional[str] = None) -> None:
         if request_id != self._latest_refresh_request_id:
             return
-        self._apply_device_refresh(devices)
+        if harmony_error:
+            self._apply_device_refresh(devices, harmony_error=harmony_error)
+        else:
+            self._apply_device_refresh(devices)
 
     def _apply_device_refresh_error(self, request_id: int, error: Exception) -> None:
         if request_id != self._latest_refresh_request_id:
@@ -174,9 +177,10 @@ class App(tk.Tk):
         devices: List[DeviceInfo],
         selection_to_restore: Optional[Iterable[str]] = None,
         summary_label: str = "设备列表已刷新",
+        harmony_error: Optional[str] = None,
     ) -> None:
-        snapshot = frozenset((device.device_id, device.platform, device.status) for device in devices)
-        log_result = snapshot != self._last_device_refresh_snapshot or summary_label != "设备列表已刷新"
+        snapshot = (frozenset((device.device_id, device.platform, device.status) for device in devices), harmony_error)
+        log_result = bool(harmony_error) or snapshot != self._last_device_refresh_snapshot or summary_label != "设备列表已刷新"
         self._last_device_refresh_snapshot = snapshot
         current_device_ids = {device.device_id for device in devices}
         requested_selection = set(
@@ -213,7 +217,7 @@ class App(tk.Tk):
         ]
         if preserved_selection:
             self.device_tree.selection_set(*preserved_selection)
-        elif only_device_id:
+        elif only_device_id and not harmony_error:
             self.device_tree.selection_set(only_device_id)
         self.device_summary_var.set(format_device_summary(self.devices))
         fit_device_columns(self.device_tree)
@@ -221,7 +225,11 @@ class App(tk.Tk):
         android_count = sum(1 for device in self.devices if device.platform == "android")
         harmony_count = sum(1 for device in self.devices if device.platform == "harmony")
         total_count = len(self.devices)
-        if log_result and total_count == 0:
+        if harmony_error:
+            if summary_label != "设备列表已刷新":
+                self.log(f"{summary_label}：Android {android_count} 台，Harmony 探测失败")
+            self.log(f"Harmony 设备探测失败：{harmony_error}；已保留检测到的 Android {android_count} 台")
+        elif log_result and total_count == 0:
             self.log(f"{summary_label}：未检测到设备")
         elif log_result:
             self.log(
@@ -487,7 +495,7 @@ class App(tk.Tk):
     ) -> None:
         started_at = time.perf_counter()
         try:
-            devices = detect_devices()
+            detection = detect_devices()
         except Exception as error:
             self.after(0, self._apply_install_preparation_error, error)
             return
@@ -495,12 +503,13 @@ class App(tk.Tk):
         self.after(
             0,
             self._finalize_install,
-            devices,
+            detection.devices,
             previous_selection,
             selected_apk,
             selected_hap,
             allow_test,
             duration_seconds,
+            detection.harmony_error,
         )
 
     def _apply_install_preparation_error(self, error: Exception) -> None:
@@ -517,7 +526,13 @@ class App(tk.Tk):
         selected_hap: Optional[Path],
         allow_test: bool,
         validation_duration_seconds: float = 0.0,
+        harmony_error: Optional[str] = None,
     ) -> None:
+        if harmony_error:
+            android_ids = {d.device_id for d in self.devices if d.platform == "android"}
+            if not previous_selection or previous_selection - android_ids:
+                self._apply_install_preparation_error(RuntimeError(harmony_error))
+                return
         self._apply_device_refresh(
             devices,
             previous_selection,
@@ -525,6 +540,7 @@ class App(tk.Tk):
                 "安装前设备校验完成"
                 f"（耗时 {validation_duration_seconds:.2f} 秒）"
             ),
+            harmony_error=harmony_error,
         )
         current_device_ids = {device.device_id for device in self.devices}
         missing_devices = previous_selection - current_device_ids
@@ -538,7 +554,7 @@ class App(tk.Tk):
             if device.device_id in previous_selection
         ]
         if not selection_list:
-            if len(self.devices) == 1:
+            if len(self.devices) == 1 and not harmony_error:
                 selection_list = [self.devices[0].device_id]
                 self.device_tree.selection_set(selection_list[0])
                 self.on_device_select(None)
@@ -863,7 +879,7 @@ class App(tk.Tk):
                         f"Harmony {device_label} 开始执行命令: "
                         f"{format_command_for_log(command)}"
                     )
-                    result = install_harmony(device_id, selected_hap, self.install_stop_event)
+                    result = install_harmony(device_id, selected_hap, self.install_stop_event, hdc_executable=command[0])
                     self._log_install_result("Harmony", device_label, result)
                 if self.install_stop_event.is_set():
                     cancelled_by_user = True
