@@ -44,7 +44,6 @@ def layout():
         "device_summary_var": "未检测到设备",
         "selected_device_summary_var": "未选择设备",
         "package_summary_var": "APK preset.apk · HAP preset.hap",
-        "device_action_hint_var": "请选择设备",
     }
     for name, value in values.items():
         setattr(host, name, tk.StringVar(master=host, value=value))

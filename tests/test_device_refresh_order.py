@@ -94,6 +94,7 @@ def make_app(previous_device_ids, selection=(), names=None):
     app.config_manager = FakeConfig(names=names)
     app.devices = []
     app.device_ids_before_last_refresh = previous_device_ids
+    app._last_device_refresh_snapshot = None
     app.refresh_button = FakeButton()
     app.scan_button = FakeButton()
     app.logged_messages = []

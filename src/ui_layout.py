@@ -5,7 +5,7 @@ from tkinter import font as tkfont, ttk
 from typing import TYPE_CHECKING
 
 from ui_display import DEVICE_DISPLAY_COLUMNS
-from ui_styles import PACKAGE_COMBO_VISIBLE_ROWS, SUMMARY_WRAP_LENGTH, configure_device_tree
+from ui_styles import DEVICE_LIST_MIN_ROWS, PACKAGE_COMBO_VISIBLE_ROWS, SUMMARY_WRAP_LENGTH, configure_device_tree
 from ui_widgets import ActionRow, ScrollableArea
 
 if TYPE_CHECKING:
@@ -53,7 +53,7 @@ def _build_device_section(app, container):
     table.pack(fill=tk.X)
     table.columnconfigure(0, weight=1)
     app.device_tree = ttk.Treeview(table, columns=('device_id','name','status','platform'),
-        displaycolumns=DEVICE_DISPLAY_COLUMNS, show='headings', selectmode='extended', height=1)
+        displaycolumns=DEVICE_DISPLAY_COLUMNS, show='headings', selectmode='extended', height=DEVICE_LIST_MIN_ROWS)
     configure_device_tree(app.device_tree)
     app.device_tree.grid(row=0, column=0, sticky=tk.NSEW)
     app.device_tree.bind('<<TreeviewSelect>>', app.on_device_select)
@@ -68,7 +68,6 @@ def _build_device_section(app, container):
     app.udid_button = actions.add('获取UDID', app.fetch_hdc_udid)
     app.crash_log_button = actions.add('获取崩溃日志', app.fetch_crash_log)
     app.nextdemo_log_button = actions.add('获取NEXTdemo日志', app.fetch_nextdemo_log)
-    _add_summary_label(section, app.device_action_hint_var)
     app.name_entry = _field_row(section, '名称', app.name_var, actions=(
         ('保存名称', app.save_device_name), ('复制设备码', app.copy_selected_device_id)))
     app.execution_selection_label = _add_summary_label(section, app.selected_device_summary_var)
@@ -138,7 +137,7 @@ def _field_row(parent, title, variable, *, actions=(), combo=False):
 
         def arrange(event):
             font = tkfont.nametofont('TkDefaultFont', root=row)
-            action_width = max(button.winfo_reqwidth() + 6 for button in buttons.buttons) * len(buttons.buttons)
+            action_width = buttons.natural_width()
             inline = event.width >= label.winfo_reqwidth() + font.measure('0' * 12) + action_width + 12
             row.columnconfigure(2, minsize=action_width + 6 if inline else 0)
             buttons.grid(row=0 if inline else 1, column=2 if inline else 1,

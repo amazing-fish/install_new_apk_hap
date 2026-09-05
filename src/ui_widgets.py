@@ -12,7 +12,7 @@ class ScrollableArea(ttk.Frame):
         self.canvas.configure(yscrollcommand=self.scrollbar.set)
         self.scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        self.content = ttk.Frame(self.canvas, padding=(12, 6))
+        self.content = ttk.Frame(self.canvas, padding=(12, 5))
         self._window = self.canvas.create_window(0, 0, window=self.content, anchor=tk.NW)
         self.content.bind('<Configure>', self._content_changed)
         self.canvas.bind('<Configure>', self._viewport_changed)
@@ -86,7 +86,9 @@ class ScrollableArea(ttk.Frame):
 
 
 class ActionRow(ttk.Frame):
-    """Reflow actions by their requested widths, including the active Tk scale."""
+    """Pack natural-width controls left to right without shared grid columns."""
+    GAP = 6
+
     def __init__(self, parent):
         super().__init__(parent)
         self.buttons = []
@@ -98,15 +100,23 @@ class ActionRow(ttk.Frame):
 
     def add_widget(self, button):
         self.buttons.append(button)
-        button.grid(row=len(self.buttons)-1, column=0, sticky=tk.W, padx=(0, 6), pady=1)
+        # Without explicit place widths, text/font changes retain native sizing.
+        button.place(x=0, y=0)
+        button.bind('<Configure>', self._arrange, add='+')
+        self._arrange()
         return button
 
-    def _arrange(self, event):
-        if not self.buttons:
-            return
-        required = max(button.winfo_reqwidth() for button in self.buttons) + 6
-        columns = max(1, min(len(self.buttons), event.width // required))
-        for index, button in enumerate(self.buttons):
-            button.grid(row=index // columns, column=index % columns)
-        for column in range(len(self.buttons)):
-            self.columnconfigure(column, weight=0)
+    def natural_width(self):
+        return sum(button.winfo_reqwidth() for button in self.buttons) + self.GAP * max(0, len(self.buttons) - 1)
+
+    def _arrange(self, _event=None):
+        available = self.winfo_width()
+        x, y, row_height = 0, 1, 0
+        for button in self.buttons:
+            width, height = button.winfo_reqwidth(), button.winfo_reqheight()
+            if x and x + width > available:
+                x, y, row_height = 0, y + row_height + 2, 0
+            button.place(x=x, y=y)
+            x += width + self.GAP
+            row_height = max(row_height, height)
+        self.configure(height=y + row_height + 1)

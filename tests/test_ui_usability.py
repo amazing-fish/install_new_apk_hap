@@ -32,7 +32,7 @@ def assert_visible(app, widget):
 
 
 @pytest.mark.parametrize('app', [1.0, 1.5, 2.0], indirect=True)
-@pytest.mark.parametrize('geometry', ['480x560', '720x680', '1024x800'])
+@pytest.mark.parametrize('geometry', ['480x560', DEFAULT_GEOMETRY, '1024x800'])
 def test_long_content_controls_reflow_and_keyboard_reveals_log(app, geometry):
     show(app, geometry)
     devices = [DeviceInfo(f'device-{i:02d}-'+ 'x'*80, 'harmony', 'device') for i in range(20)]

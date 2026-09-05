@@ -31,7 +31,7 @@ from ui_display import (
     get_device_display_name,
 )
 from ui_layout import build_ui
-from ui_styles import DEVICE_LIST_MAX_ROWS, configure_window, fit_device_columns
+from ui_styles import DEVICE_LIST_MIN_ROWS, DEVICE_LIST_MAX_ROWS, configure_window, fit_device_columns, fit_initial_window
 
 
 @dataclass(frozen=True)
@@ -85,14 +85,16 @@ class App(tk.Tk):
         self.device_summary_var = tk.StringVar(master=self, value=format_device_summary(self.devices))
         self.selected_device_summary_var = tk.StringVar(master=self, value="未选择设备")
         self.package_summary_var = tk.StringVar(master=self, value=format_package_summary(None, None))
-        self.device_action_hint_var = tk.StringVar(master=self)
         self.udid_fetching = False
         self.crash_log_fetching = False
         self.log_operation = ""
         self.device_ids_before_last_refresh: Optional[Set[str]] = None
         self._latest_refresh_request_id = 0
+        self._last_device_refresh_snapshot = None
+        self._last_package_scan_snapshot = None
 
         build_ui(self)
+        fit_initial_window(self, self.device_tree)
         self._update_device_actions()
         self.refresh_devices()
         self.load_last_scan_dir()
@@ -119,6 +121,8 @@ class App(tk.Tk):
         self.log_text.configure(state=tk.NORMAL)
         self.log_text.delete("1.0", tk.END)
         self.log_text.configure(state=tk.DISABLED)
+        self._last_device_refresh_snapshot = None
+        self._last_package_scan_snapshot = None
 
     def copy_log(self) -> None:
         content = self.log_text.get("1.0", "end-1c")
@@ -139,7 +143,6 @@ class App(tk.Tk):
         self._latest_refresh_request_id += 1
         request_id = self._latest_refresh_request_id
         self._set_refresh_state(True)
-        self._log_threadsafe("开始刷新设备列表")
         threading.Thread(target=self._refresh_devices_worker, args=(request_id,), daemon=True).start()
 
     def refresh_devices_and_packages(self) -> None:
@@ -162,6 +165,7 @@ class App(tk.Tk):
     def _apply_device_refresh_error(self, request_id: int, error: Exception) -> None:
         if request_id != self._latest_refresh_request_id:
             return
+        self._last_device_refresh_snapshot = None
         self.log(f"刷新设备列表失败：{error}")
         self._set_refresh_state(False)
 
@@ -171,6 +175,9 @@ class App(tk.Tk):
         selection_to_restore: Optional[Iterable[str]] = None,
         summary_label: str = "设备列表已刷新",
     ) -> None:
+        snapshot = frozenset((device.device_id, device.platform, device.status) for device in devices)
+        log_result = snapshot != self._last_device_refresh_snapshot or summary_label != "设备列表已刷新"
+        self._last_device_refresh_snapshot = snapshot
         current_device_ids = {device.device_id for device in devices}
         requested_selection = set(
             self.device_tree.selection()
@@ -214,9 +221,9 @@ class App(tk.Tk):
         android_count = sum(1 for device in self.devices if device.platform == "android")
         harmony_count = sum(1 for device in self.devices if device.platform == "harmony")
         total_count = len(self.devices)
-        if total_count == 0:
+        if log_result and total_count == 0:
             self.log(f"{summary_label}：未检测到设备")
-        else:
+        elif log_result:
             self.log(
                 f"{summary_label}："
                 f"Android {android_count} 台, Harmony {harmony_count} 台, 总计 {total_count} 台"
@@ -227,7 +234,7 @@ class App(tk.Tk):
         self._set_refresh_state(False)
 
     def _update_device_tree_height(self) -> None:
-        display_count = max(1, min(len(self.devices), DEVICE_LIST_MAX_ROWS))
+        display_count = max(DEVICE_LIST_MIN_ROWS, min(len(self.devices), DEVICE_LIST_MAX_ROWS))
         self.device_tree.configure(height=display_count)
 
     def _update_selected_device_summary(self) -> None:
@@ -357,18 +364,29 @@ class App(tk.Tk):
     def scan_latest_packages(self) -> None:
         folder = self.folder_var.get().strip()
         if not folder:
+            self._last_package_scan_snapshot = None
             messagebox.showwarning("提示", "请先选择目录")
             self.log("扫描失败：未选择目录")
             return
         directory = Path(folder)
-        if not directory.exists():
-            messagebox.showwarning("提示", "目录不存在")
-            self.log(f"扫描失败：目录不存在 {directory}")
+        if not directory.is_dir():
+            self._last_package_scan_snapshot = None
+            messagebox.showwarning("提示", "目录不存在或不是目录")
+            self.log(f"扫描失败：目录不存在或不是目录 {directory}")
             return
-        self.log(f"开始扫描最新安装包: {directory}")
-        package_info = find_latest_packages(directory)
-        self.latest_apk = package_info.apk_path
-        self.latest_hap = package_info.hap_path
+        try:
+            package_info = find_latest_packages(directory)
+            files = []
+            for path in package_info.apk_candidates + package_info.hap_candidates:
+                stat = path.stat()
+                files.append((path, stat.st_size, stat.st_mtime_ns))
+            snapshot = (directory.resolve(), tuple(files))
+        except OSError as error:
+            self._last_package_scan_snapshot = None
+            self.log(f"扫描安装包失败：{directory}，{error}")
+            messagebox.showwarning("提示", f"扫描安装包失败：{error}")
+            return
+        previous_selection = (self.latest_apk, self.latest_hap, self.apk_test_var.get())
         self.apk_name_map = {path.name: path for path in package_info.apk_candidates}
         self.hap_name_map = {path.name: path for path in package_info.hap_candidates}
         self.latest_apk = self._update_package_options(
@@ -382,7 +400,10 @@ class App(tk.Tk):
         apk_needs_t = self.config_manager.data.get("apk_needs_t", [])
         self.apk_test_var.set(self.latest_apk is not None and self.latest_apk.name in apk_needs_t)
         self._update_package_summary()
-        self.log(f"已扫描最新安装包: APK={apk_name}, HAP={hap_name}")
+        selection = (self.latest_apk, self.latest_hap, self.apk_test_var.get())
+        if snapshot != self._last_package_scan_snapshot or selection != previous_selection:
+            self.log(f"安装包扫描完成：{directory} · APK={apk_name}, HAP={hap_name}")
+        self._last_package_scan_snapshot = snapshot
 
     def _update_package_summary(self) -> None:
         self.package_summary_var.set(format_package_summary(self.latest_apk, self.latest_hap))
@@ -580,21 +601,6 @@ class App(tk.Tk):
         self.udid_button.config(state=tk.NORMAL if harmony and not busy else tk.DISABLED)
         self.nextdemo_log_button.config(state=tk.NORMAL if harmony and not busy else tk.DISABLED)
         self.crash_log_button.config(state=tk.NORMAL if supported and not busy else tk.DISABLED)
-        if self.installing:
-            hint = "安装任务进行中；中止入口固定在窗口底部。"
-        elif self.refreshing:
-            hint = "正在刷新设备…"
-        elif self.udid_fetching:
-            hint = "正在获取 UDID…"
-        elif self.crash_log_fetching:
-            hint = f"正在获取{self.log_operation}…"
-        elif not supported:
-            hint = "日志操作需单选设备；UDID 和 NEXTdemo 日志仅支持 Harmony。"
-        elif harmony:
-            hint = "已选 Harmony；支持 UDID、崩溃日志和 NEXTdemo 日志。"
-        else:
-            hint = "已选 Android；支持崩溃日志，UDID 和 NEXTdemo 日志仅支持 Harmony。"
-        self.device_action_hint_var.set(hint)
 
     def _get_log_output_dir(self) -> Path:
         if os.name == "nt":
