@@ -504,6 +504,7 @@ class App(tk.Tk):
         )
 
     def _apply_install_preparation_error(self, error: Exception) -> None:
+        self._last_device_refresh_snapshot = None
         self._finish_install("安装异常")
         self.log(f"安装前设备校验失败：{error}")
         messagebox.showwarning("安装异常", f"安装前设备校验失败：{error}")

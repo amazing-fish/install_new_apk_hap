@@ -79,11 +79,17 @@ def test_device_status_changes_and_preinstall_audit_are_not_suppressed(app):
     assert '安装前设备校验完成' in app.log_text.get('1.0', 'end')
 
 
-def test_refresh_error_recovery_and_log_clear_keep_visible_results(app, tmp_path):
+def test_refresh_error_recovery_and_log_clear_keep_visible_results(app, tmp_path, monkeypatch):
     app.folder_var.set(str(tmp_path))
     app.scan_latest_packages()
     app._apply_device_refresh([])
     app._apply_device_refresh_error(app._latest_refresh_request_id, RuntimeError('probe failed'))
+    failed = app.log_text.get('1.0', 'end')
+    app._apply_device_refresh([])
+    assert app.log_text.get('1.0', 'end') != failed
+    monkeypatch.setattr(main.messagebox, 'showwarning', lambda *args: None)
+    app._set_install_state(True)
+    app._apply_install_preparation_error(RuntimeError('preinstall probe failed'))
     failed = app.log_text.get('1.0', 'end')
     app._apply_device_refresh([])
     assert app.log_text.get('1.0', 'end') != failed
