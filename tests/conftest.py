@@ -14,10 +14,13 @@ def app(monkeypatch, tmp_path, request):
     monkeypatch.setattr(main.App, 'refresh_devices', lambda self: None)
     monkeypatch.setattr(main.App, 'load_last_scan_dir', lambda self: None)
     configure = main.configure_window
+    original_scale = []
     if hasattr(request, 'param'):
         def scaled_window(window):
-            configure(window)
+            # Set the scale before configure_window realizes fonts and styles.
+            original_scale.append(window.tk.call('tk', 'scaling'))
             window.tk.call('tk', 'scaling', request.param)
+            configure(window)
         monkeypatch.setattr(main, 'configure_window', scaled_window)
     window = main.App()
     window.withdraw()
@@ -27,5 +30,8 @@ def app(monkeypatch, tmp_path, request):
         yield window
     finally:
         window.update_idletasks()
+        # Tk's display scale survives separate Tk interpreters in one process.
+        if original_scale:
+            window.tk.call('tk', 'scaling', original_scale[0])
         window.destroy()
         assert not errors, errors

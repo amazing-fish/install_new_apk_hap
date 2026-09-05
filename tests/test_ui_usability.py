@@ -5,6 +5,7 @@ from tkinter import ttk
 import pytest
 
 import main
+from ui_styles import DEFAULT_GEOMETRY
 from services.device_detector import DeviceInfo
 from services.installer import InstallResult
 
@@ -31,7 +32,7 @@ def assert_visible(app, widget):
 
 
 @pytest.mark.parametrize('app', [1.0, 1.5, 2.0], indirect=True)
-@pytest.mark.parametrize('geometry', ['480x560', '720x780', '1024x800'])
+@pytest.mark.parametrize('geometry', ['480x560', '720x680', '1024x800'])
 def test_long_content_controls_reflow_and_keyboard_reveals_log(app, geometry):
     show(app, geometry)
     devices = [DeviceInfo(f'device-{i:02d}-'+ 'x'*80, 'harmony', 'device') for i in range(20)]
@@ -39,12 +40,17 @@ def test_long_content_controls_reflow_and_keyboard_reveals_log(app, geometry):
     app._apply_device_refresh(devices)
     app.device_tree.selection_set(*[d.device_id for d in devices])
     app.latest_apk, app.latest_hap = Path('long-'*30+'.apk'), Path('long-'*30+'.hap')
+    app.apk_var.set(app.latest_apk.name)
+    app.hap_var.set(app.latest_hap.name)
     app._update_package_summary()
     app.update()
     assert_visible(app, app.install_button)
     assert_visible(app, app.status_selection_label)
-    assert app.scroll_area.canvas.yview()[1] < 1
     canvas = app.scroll_area.canvas
+    if app.scroll_area.content.winfo_height() > canvas.winfo_height():
+        assert canvas.yview()[1] < 1
+    else:
+        assert canvas.yview() == (0, 1)
     for button in descendants(app.scroll_area.content):
         if isinstance(button, ttk.Button):
             assert button.winfo_width() >= button.winfo_reqwidth()
@@ -68,6 +74,53 @@ def test_long_content_controls_reflow_and_keyboard_reveals_log(app, geometry):
     app.log_text.event_generate('<Control-End>')
     app.update()
     assert canvas.yview()[1] == 1
+
+
+@pytest.mark.parametrize('app', [1.0, 1.5, 1.67], indirect=True)
+def test_default_window_shows_device_packages_and_log_without_page_scroll(app):
+    show(app, DEFAULT_GEOMETRY)
+    app._apply_device_refresh([DeviceInfo('android-a', 'android', 'device'),
+                              DeviceInfo('harmony-b', 'harmony', 'device')])
+    app.device_tree.selection_set('android-a')
+    app.apk_combo.configure(values=['demo.apk'], state='readonly')
+    app.apk_var.set('demo.apk')
+    app.update()
+    for control in (app.device_tree, app.name_entry, app.scan_button, app.apk_combo,
+                    app.hap_combo, app.log_text, app.install_button):
+        assert_visible(app, control)
+    assert app.scroll_area.canvas.yview() == (0, 1)
+    # Name/folder actions stay alongside their field in the ordinary window.
+    assert app.name_entry.actions.buttons[0].winfo_rooty() == app.name_entry.actions.buttons[1].winfo_rooty()
+
+
+def test_full_summaries_only_expand_when_primary_names_are_clipped(app):
+    show(app, DEFAULT_GEOMETRY)
+    app._apply_device_refresh([DeviceInfo('a', 'android', 'device')])
+    app.apk_combo.configure(values=['short.apk'], state='readonly')
+    app.apk_var.set('short.apk')
+    app.latest_apk = Path('short.apk')
+    app._update_package_summary()
+    app.update()
+    package_summary, = [widget for widget in descendants(app.scroll_area.content)
+        if isinstance(widget, ttk.Label) and str(widget.cget('textvariable')) == str(app.package_summary_var)]
+    assert not app.execution_selection_label.winfo_ismapped()
+    assert not package_summary.winfo_ismapped()
+    app.config_manager.data['device_names'] = {'a': '长设备名称' * 30}
+    app._update_selected_device_summary()
+    app.latest_apk = Path('long-name-' * 30 + '.apk')
+    app.apk_var.set(app.latest_apk.name)
+    app._update_package_summary()
+    app.update()
+    assert app.execution_selection_label.winfo_ismapped()
+    assert package_summary.winfo_ismapped()
+    app.config_manager.data['device_names'] = {'a': 'A'}
+    app._update_selected_device_summary()
+    app.apk_var.set('short.apk')
+    app.latest_apk = Path('short.apk')
+    app._update_package_summary()
+    app.update()
+    assert not app.execution_selection_label.winfo_ismapped()
+    assert not package_summary.winfo_ismapped()
 
 
 def test_tab_visits_actions_and_nested_wheel_does_not_move_page(app):

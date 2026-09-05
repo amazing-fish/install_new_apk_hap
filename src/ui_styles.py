@@ -5,17 +5,17 @@ from tkinter import font as tkfont, ttk
 
 
 WINDOW_TITLE = "APK/HAP 安装工具"
-DEFAULT_GEOMETRY = "720x780"
+DEFAULT_GEOMETRY = "720x680"
 MIN_WINDOW_SIZE = (480, 560)
 DEVICE_LIST_MAX_ROWS = 8
 PACKAGE_COMBO_VISIBLE_ROWS = 10
 SUMMARY_WRAP_LENGTH = 460
 NEW_DEVICE_BACKGROUND = "#DFF6DD"
 DEVICE_COLUMN_STYLES = (
-    ("device_id", "设备码", 130),
-    ("name", "名称", 100),
-    ("status", "状态", 120),
-    ("platform", "平台", 120),
+    ("device_id", "设备码", 160),
+    ("name", "名称", 130),
+    ("status", "状态", 90),
+    ("platform", "平台", 85),
 )
 
 
@@ -23,6 +23,12 @@ def configure_window(window: tk.Tk) -> None:
     window.title(WINDOW_TITLE)
     window.geometry(DEFAULT_GEOMETRY)
     window.minsize(*MIN_WINDOW_SIZE)
+    style = ttk.Style(window)
+    font = tkfont.nametofont('TkDefaultFont', root=window)
+    style.configure('Section.TLabel', font=(font.actual('family'), font.actual('size'), 'bold'))
+    style.configure('Hint.TLabel', foreground='#62666e')
+    style.configure('Compact.TButton', padding=(6, 1), width=0)
+    style.configure('Primary.TButton', padding=(14, 7))
 
 
 def configure_device_tree(tree: ttk.Treeview) -> None:

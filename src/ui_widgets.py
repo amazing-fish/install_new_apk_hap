@@ -12,7 +12,7 @@ class ScrollableArea(ttk.Frame):
         self.canvas.configure(yscrollcommand=self.scrollbar.set)
         self.scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        self.content = ttk.Frame(self.canvas, padding=(12, 8))
+        self.content = ttk.Frame(self.canvas, padding=(12, 6))
         self._window = self.canvas.create_window(0, 0, window=self.content, anchor=tk.NW)
         self.content.bind('<Configure>', self._content_changed)
         self.canvas.bind('<Configure>', self._viewport_changed)
@@ -93,17 +93,20 @@ class ActionRow(ttk.Frame):
         self.bind('<Configure>', self._arrange)
 
     def add(self, text, command):
-        button = ttk.Button(self, text=text, command=command)
+        button = ttk.Button(self, text=text, command=command, style='Compact.TButton')
+        return self.add_widget(button)
+
+    def add_widget(self, button):
         self.buttons.append(button)
-        button.grid(row=len(self.buttons)-1, column=0, sticky=tk.EW, padx=2, pady=3)
+        button.grid(row=len(self.buttons)-1, column=0, sticky=tk.W, padx=(0, 6), pady=1)
         return button
 
     def _arrange(self, event):
         if not self.buttons:
             return
-        required = max(button.winfo_reqwidth() for button in self.buttons) + 4
+        required = max(button.winfo_reqwidth() for button in self.buttons) + 6
         columns = max(1, min(len(self.buttons), event.width // required))
         for index, button in enumerate(self.buttons):
             button.grid(row=index // columns, column=index % columns)
         for column in range(len(self.buttons)):
-            self.columnconfigure(column, weight=1 if column < columns else 0)
+            self.columnconfigure(column, weight=0)
