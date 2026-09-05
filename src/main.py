@@ -31,7 +31,7 @@ from ui_display import (
     get_device_display_name,
 )
 from ui_layout import build_ui
-from ui_styles import DEVICE_LIST_MAX_ROWS, configure_window
+from ui_styles import DEVICE_LIST_MAX_ROWS, configure_window, fit_device_columns
 
 
 @dataclass(frozen=True)
@@ -74,6 +74,7 @@ class App(tk.Tk):
         self.apk_name_map: Dict[str, Path] = {}
         self.hap_name_map: Dict[str, Path] = {}
         self.installing = False
+        self.refreshing = False
         self.install_stop_event = threading.Event()
         self.name_var = tk.StringVar(master=self)
         self.folder_var = tk.StringVar(master=self)
@@ -84,12 +85,15 @@ class App(tk.Tk):
         self.device_summary_var = tk.StringVar(master=self, value=format_device_summary(self.devices))
         self.selected_device_summary_var = tk.StringVar(master=self, value="未选择设备")
         self.package_summary_var = tk.StringVar(master=self, value=format_package_summary(None, None))
+        self.device_action_hint_var = tk.StringVar(master=self)
         self.udid_fetching = False
         self.crash_log_fetching = False
+        self.log_operation = ""
         self.device_ids_before_last_refresh: Optional[Set[str]] = None
         self._latest_refresh_request_id = 0
 
         build_ui(self)
+        self._update_device_actions()
         self.refresh_devices()
         self.load_last_scan_dir()
 
@@ -205,6 +209,7 @@ class App(tk.Tk):
         elif only_device_id:
             self.device_tree.selection_set(only_device_id)
         self.device_summary_var.set(format_device_summary(self.devices))
+        fit_device_columns(self.device_tree)
         self.on_device_select(None)
         android_count = sum(1 for device in self.devices if device.platform == "android")
         harmony_count = sum(1 for device in self.devices if device.platform == "harmony")
@@ -232,6 +237,7 @@ class App(tk.Tk):
 
     def on_device_select(self, _event: Optional[tk.Event]) -> None:
         self._update_selected_device_summary()
+        self._update_device_actions()
         selection = self.device_tree.selection()
         if len(selection) != 1:
             self.name_var.set("")
@@ -287,8 +293,18 @@ class App(tk.Tk):
         threading.Thread(target=self._fetch_hdc_udid_worker, args=(device_id,), daemon=True).start()
 
     def _fetch_hdc_udid_worker(self, device_id: str) -> None:
-        udid = get_hdc_device_udid(device_id)
+        try:
+            udid = get_hdc_device_udid(device_id)
+        except Exception as error:
+            self.after(0, self._apply_hdc_udid_error, device_id, error)
+            return
         self.after(0, self._apply_hdc_udid_result, device_id, udid)
+
+    def _apply_hdc_udid_error(self, device_id: str, error: Exception) -> None:
+        self._set_udid_fetch_state(False)
+        message = f"获取 UDID 失败：设备 {self._device_label(device_id)}，{error}"
+        self.log(message)
+        messagebox.showwarning("提示", message)
 
     def _apply_hdc_udid_result(self, device_id: str, udid: Optional[str]) -> None:
         self._set_udid_fetch_state(False)
@@ -315,6 +331,7 @@ class App(tk.Tk):
         name = self.name_var.get().strip()
         self.config_manager.set_device_name(device_id, name)
         self.device_tree.set(device_id, "name", name)
+        fit_device_columns(self.device_tree)
         self._update_selected_device_summary()
         self.log(f"已保存设备名称: {self._device_label(device_id)}")
 
@@ -448,7 +465,11 @@ class App(tk.Tk):
         allow_test: bool,
     ) -> None:
         started_at = time.perf_counter()
-        devices = detect_devices()
+        try:
+            devices = detect_devices()
+        except Exception as error:
+            self.after(0, self._apply_install_preparation_error, error)
+            return
         duration_seconds = time.perf_counter() - started_at
         self.after(
             0,
@@ -460,6 +481,11 @@ class App(tk.Tk):
             allow_test,
             duration_seconds,
         )
+
+    def _apply_install_preparation_error(self, error: Exception) -> None:
+        self._finish_install("安装异常")
+        self.log(f"安装前设备校验失败：{error}")
+        messagebox.showwarning("安装异常", f"安装前设备校验失败：{error}")
 
     def _finalize_install(
         self,
@@ -511,7 +537,7 @@ class App(tk.Tk):
         self.installing = installing
         if installing:
             self.install_stop_event.clear()
-            self.install_button.config(state=tk.NORMAL, text="中止下载")
+            self.install_button.config(state=tk.NORMAL, text="中止安装")
             self.install_status_var.set("安装中")
         else:
             self.install_button.config(state=tk.NORMAL, text="安装到所选设备")
@@ -519,22 +545,56 @@ class App(tk.Tk):
                 self.install_status_var.set("已中止")
             elif self.install_status_var.get() == "安装中":
                 self.install_status_var.set("安装完成")
+        self._update_device_actions()
+
+    def _finish_install(self, status: str) -> None:
+        self.install_status_var.set(status)
+        self._set_install_state(False)
+        self.log(status)
 
     def _set_refresh_state(self, refreshing: bool) -> None:
+        self.refreshing = refreshing
         state = tk.DISABLED if refreshing else tk.NORMAL
-        self.refresh_button.config(state=state)
-        self.scan_button.config(state=state)
+        self.refresh_button.config(state=state, text="刷新中…" if refreshing else "刷新设备")
+        self.scan_button.config(state=state, text="刷新中…" if refreshing else "扫描最新包")
+        self._update_device_actions()
 
     def _set_udid_fetch_state(self, fetching: bool) -> None:
         self.udid_fetching = fetching
-        state = tk.DISABLED if fetching else tk.NORMAL
-        self.udid_button.config(state=state)
+        self.udid_button.config(text="获取UDID中…" if fetching else "获取UDID")
+        self._update_device_actions()
 
-    def _set_crash_log_fetch_state(self, fetching: bool) -> None:
+    def _set_crash_log_fetch_state(self, fetching: bool, operation: str = "崩溃日志") -> None:
         self.crash_log_fetching = fetching
-        state = tk.DISABLED if fetching else tk.NORMAL
-        self.crash_log_button.config(state=state)
-        self.nextdemo_log_button.config(state=state)
+        self.log_operation = operation if fetching else ""
+        self.crash_log_button.config(text="获取崩溃日志中…" if fetching and operation == "崩溃日志" else "获取崩溃日志")
+        self.nextdemo_log_button.config(text="获取NEXTdemo日志中…" if fetching and operation == "NEXTdemo日志" else "获取NEXTdemo日志")
+        self._update_device_actions()
+
+    def _update_device_actions(self) -> None:
+        selection = self.device_tree.selection()
+        device = next((d for d in self.devices if len(selection) == 1 and d.device_id == selection[0]), None)
+        busy = self.refreshing or self.installing or self.udid_fetching or self.crash_log_fetching
+        harmony = device is not None and device.platform == "harmony"
+        supported = device is not None and device.platform in ("android", "harmony")
+        self.udid_button.config(state=tk.NORMAL if harmony and not busy else tk.DISABLED)
+        self.nextdemo_log_button.config(state=tk.NORMAL if harmony and not busy else tk.DISABLED)
+        self.crash_log_button.config(state=tk.NORMAL if supported and not busy else tk.DISABLED)
+        if self.installing:
+            hint = "安装任务进行中；中止入口固定在窗口底部。"
+        elif self.refreshing:
+            hint = "正在刷新设备…"
+        elif self.udid_fetching:
+            hint = "正在获取 UDID…"
+        elif self.crash_log_fetching:
+            hint = f"正在获取{self.log_operation}…"
+        elif not supported:
+            hint = "日志操作需单选设备；UDID 和 NEXTdemo 日志仅支持 Harmony。"
+        elif harmony:
+            hint = "已选 Harmony；支持 UDID、崩溃日志和 NEXTdemo 日志。"
+        else:
+            hint = "已选 Android；支持崩溃日志，UDID 和 NEXTdemo 日志仅支持 Harmony。"
+        self.device_action_hint_var.set(hint)
 
     def _get_log_output_dir(self) -> Path:
         if os.name == "nt":
@@ -691,7 +751,7 @@ class App(tk.Tk):
             self.log(f"获取NEXTdemo日志失败：设备 {device_label} 非 Harmony")
             return
         output_dir = self._get_log_output_dir()
-        self._set_crash_log_fetch_state(True)
+        self._set_crash_log_fetch_state(True, "NEXTdemo日志")
         self.log(f"开始获取NEXTdemo日志: {device_label} -> {output_dir}")
         threading.Thread(
             target=self._fetch_nextdemo_log_worker,
@@ -751,6 +811,8 @@ class App(tk.Tk):
         self._log_threadsafe(f"开始安装到所选设备: {self._device_labels_for_log(selection)}")
         cancelled_by_user = False
         install_failed = False
+        failed_commands = 0
+        skipped_targets = 0
         try:
             for device_id in selection:
                 device_label = self._device_label(device_id)
@@ -760,10 +822,12 @@ class App(tk.Tk):
                     break
                 device = next((d for d in self.devices if d.device_id == device_id), None)
                 if not device:
+                    skipped_targets += 1
                     self._log_threadsafe(f"{device_label}: 设备信息未找到，跳过")
                     continue
                 if device.platform == "android":
                     if not selected_apk:
+                        skipped_targets += 1
                         self._log_threadsafe(f"{device_label}: 未找到 APK，跳过")
                         continue
                     command = build_android_install_command(
@@ -784,6 +848,7 @@ class App(tk.Tk):
                     self._log_install_result("Android", device_label, result)
                 else:
                     if not selected_hap:
+                        skipped_targets += 1
                         self._log_threadsafe(f"{device_label}: 未找到 HAP，跳过")
                         continue
                     command = build_harmony_install_command(device_id, selected_hap)
@@ -797,15 +862,23 @@ class App(tk.Tk):
                     cancelled_by_user = True
                     self._log_threadsafe(f"{device_label}: 安装已中止")
                     break
+                if result.process.returncode != 0:
+                    failed_commands += 1
         except Exception as error:
             install_failed = True
             self._log_threadsafe(f"安装线程异常: {error}")
         finally:
             if install_failed:
-                self.after(0, self.install_status_var.set, "安装异常")
+                status = "安装异常"
             elif cancelled_by_user:
-                self.after(0, self.install_status_var.set, "正在中止")
-            self.after(0, self._set_install_state, False)
+                status = "已中止"
+            elif failed_commands:
+                status = "安装失败"
+            elif skipped_targets:
+                status = "安装未完成"
+            else:
+                status = "安装完成"
+            self.after(0, self._finish_install, status)
 
     def _log_install_result(
         self,
@@ -826,7 +899,7 @@ class App(tk.Tk):
         if not self.installing:
             return
         self.install_stop_event.set()
-        self.install_button.config(state=tk.DISABLED)
+        self.install_button.config(state=tk.DISABLED, text="正在中止…")
         self.install_status_var.set("正在中止")
         self._log_threadsafe("已请求中止安装")
 

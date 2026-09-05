@@ -13,20 +13,6 @@ import main
 from services.device_detector import DeviceInfo
 
 
-@pytest.fixture
-def app(monkeypatch, tmp_path):
-    monkeypatch.setattr(main.App, "_get_config_path", lambda self: tmp_path / "config.json")
-    monkeypatch.setattr(main.App, "refresh_devices", lambda self: None)
-    monkeypatch.setattr(main.App, "load_last_scan_dir", lambda self: None)
-    window = main.App()
-    window.withdraw()
-    try:
-        yield window
-    finally:
-        window.update_idletasks()
-        window.destroy()
-
-
 def assert_selection_labels(app, expected):
     assert app.selected_device_summary_var.get() == expected
     for label in (app.execution_selection_label, app.status_selection_label):
@@ -156,7 +142,7 @@ def test_package_display_changes_do_not_mutate_install_click_snapshot(app, monke
     assert app.package_summary_var.get() == "APK next.apk · HAP next.hap"
 
 
-def test_default_and_desktop_layout_keep_install_and_log_visible(app):
+def test_default_and_desktop_layout_keep_install_fixed_and_log_reachable(app):
     app.attributes("-alpha", 0)
     app.deiconify()
     app._apply_device_refresh([
@@ -174,6 +160,9 @@ def test_default_and_desktop_layout_keep_install_and_log_visible(app):
             + int(app.log_text.cget("highlightthickness"))
         )
         for widget in (app.install_button, app.log_text, app.status_selection_label):
+            if widget is app.log_text:
+                app.log_text.focus_force()
+                app.update()
             assert widget.winfo_ismapped()
             required_height = log_min_height if widget is app.log_text else widget.winfo_reqheight()
             assert widget.winfo_height() >= required_height

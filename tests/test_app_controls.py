@@ -47,6 +47,7 @@ def test_refresh_state_controls_both_refresh_entry_points() -> None:
     app = object.__new__(main.App)
     app.refresh_button = FakeButton()
     app.scan_button = FakeButton()
+    app._update_device_actions = lambda: None
 
     main.App._set_refresh_state(app, True)
     assert app.refresh_button.settings["state"] == main.tk.DISABLED
