@@ -112,9 +112,13 @@ def test_rejects_duplicate_members_and_malformed_json(tmp_path):
     with pytest.warns(UserWarning), zipfile.ZipFile(path, 'a') as archive:
         archive.writestr('module.json', '{broken')
     assert read_package_label(path, MetadataTools()).status == 'invalid'
+    with zipfile.ZipFile(path, 'w') as archive:
+        archive.writestr('module.json', '{broken')
+    assert read_package_label(path, MetadataTools()).status == 'invalid'
 
 
-def test_zip64_directory_cannot_bypass_legacy_size_check(tmp_path, monkeypatch):
+@pytest.mark.parametrize('comment_size', [0, 65515, 65516, 65535])
+def test_zip64_directory_cannot_bypass_legacy_size_check(tmp_path, monkeypatch, comment_size):
     path = hap(tmp_path, {'app': {'label': 'Should not be read'}})
     data = path.read_bytes()
     offset = data.rfind(b'PK\x05\x06')
@@ -124,15 +128,20 @@ def test_zip64_directory_cannot_bypass_legacy_size_check(tmp_path, monkeypatch):
                         record[4], record[4], size, start)
     locator = struct.pack('<4sIQI', b'PK\x06\x07', 0, offset, 1)
     record[3], record[4], record[5] = 1, 1, 1
-    path.write_bytes(data[:offset] + zip64 + locator + struct.pack('<4s4H2IH', *record))
+    record[7] = comment_size
+    path.write_bytes(data[:offset] + zip64 + locator + struct.pack('<4s4H2IH', *record) + b'x' * comment_size)
     # Python follows ZIP64 despite the small, non-sentinel legacy values.
     with zipfile.ZipFile(path) as archive:
         assert len(archive.namelist()) == 2
     monkeypatch.setattr(metadata, 'MAX_METADATA_BYTES', size - 1)
     assert read_package_label(path, MetadataTools()).status == 'limited'
-    with zipfile.ZipFile(path, 'w') as archive:
-        archive.writestr('module.json', '{broken')
-    assert read_package_label(path, MetadataTools()).status == 'invalid'
+
+
+def test_classic_zip_with_maximum_comment_keeps_literal_label(tmp_path):
+    path = hap(tmp_path, {'app': {'label': 'Maximum comment'}})
+    with zipfile.ZipFile(path, 'a') as archive:
+        archive.comment = b'x' * 65535
+    assert read_package_label(path, MetadataTools()).name == 'Maximum comment'
 
 
 def test_display_collision_cannot_overwrite_file_identity():

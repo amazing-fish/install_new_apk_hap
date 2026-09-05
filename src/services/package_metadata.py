@@ -113,8 +113,10 @@ def _check_zip_directory(path: Path) -> None:
     with path.open('rb') as stream:
         stream.seek(0, os.SEEK_END)
         size = stream.tell()
-        stream.seek(max(0, size - 65557))
-        tail = stream.read(65557)
+        # Maximum comment + classic EOCD + the preceding ZIP64 locator.
+        tail_size = 65535 + 22 + 20
+        stream.seek(max(0, size - tail_size))
+        tail = stream.read(tail_size)
     offset = tail.rfind(b'PK\x05\x06')
     if offset < 0 or offset + 22 > len(tail):
         raise zipfile.BadZipFile('missing ZIP directory')
