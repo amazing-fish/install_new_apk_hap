@@ -24,7 +24,7 @@ def test_run_android_dropbox_dump_reports_missing_adb(monkeypatch, tmp_path) -> 
     assert not log_path.exists()
 
 
-def test_harmony_crash_zip_ignores_stale_faultlogger_directory(monkeypatch, tmp_path) -> None:
+def test_harmony_crash_zip_ignores_stale_faultlogger_directory(monkeypatch, tmp_path, hdc_executable) -> None:
     stale_dir = tmp_path / "faultlogger"
     stale_dir.mkdir()
     (stale_dir / "old_crash.log").write_text("old", encoding="utf-8")
@@ -47,7 +47,7 @@ def test_harmony_crash_zip_ignores_stale_faultlogger_directory(monkeypatch, tmp_
     assert "old_crash.log" not in names
 
 
-def test_harmony_crash_zip_sanitizes_device_id_in_zip_filename(monkeypatch, tmp_path) -> None:
+def test_harmony_crash_zip_sanitizes_device_id_in_zip_filename(monkeypatch, tmp_path, hdc_executable) -> None:
     def fake_run(command):
         receive_target = Path(command[-1])
         fresh_dir = receive_target / "faultlogger"

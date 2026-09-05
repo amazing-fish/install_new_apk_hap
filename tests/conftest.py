@@ -9,7 +9,18 @@ import main
 
 
 @pytest.fixture
-def app(monkeypatch, tmp_path, request):
+def hdc_executable(monkeypatch, tmp_path):
+    import os
+    tool = tmp_path / 'SDK with spaces' / ('hdc.exe' if os.name == 'nt' else 'hdc')
+    tool.parent.mkdir()
+    tool.touch()
+    tool.chmod(0o755)
+    monkeypatch.setenv('HDC_EXECUTABLE', str(tool))
+    return str(tool.resolve())
+
+
+@pytest.fixture
+def app(monkeypatch, tmp_path, request, hdc_executable):
     monkeypatch.setattr(main.App, '_get_config_path', lambda self: tmp_path / 'config.json')
     monkeypatch.setattr(main.App, 'refresh_devices', lambda self: None)
     monkeypatch.setattr(main.App, 'load_last_scan_dir', lambda self: None)

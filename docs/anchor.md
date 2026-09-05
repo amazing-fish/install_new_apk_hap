@@ -10,7 +10,8 @@
 - **设备探测**：
   - Android：`adb devices -l`
     - 过滤规则：跳过 `emulator-xxx` 设备，不计入设备列表。
-  - Harmony：`hdc list targets`
+  - Harmony：`hdc list targets`；`DeviceDetectionResult` 分开返回设备与 Harmony 错误，HDC 失败仍保留可用 Android。返回码非零、`[Fail]` 输出、工具缺失或无法启动均为失败，不能记为空列表成功。
+- **HDC 寻址**：`services/hdc.py` 统一解析，优先级为 `HDC_EXECUTABLE` → `HDC_PATH` → `DEVECO_SDK_HOME` → PATH → Windows 常见 DevEco SDK 位置（详见 README）。显式配置失败即报错；没有全局缓存，每项操作保留已解析路径，安装日志与实际执行、NEXTdemo 查找与拉取不各自换工具。
 - **设备列表**：默认至少 4 行，设备较多时最多展示 8 行并滚动访问其余项；行高根据字体测量，避免缩放后文字裁切。刷新后相对上次新增的设备置顶并以浅绿色高亮。
 - **状态显示**：表格视觉顺序为名称、平台、状态、设备码，行身份仍为 `device_id`，状态保留探测原值。`ui_display.py` 统一名称、平台和摘要格式化；统计表示当前检测列表，不将未授权/离线设备宣称为可安装。
   - 设备刷新完成后同步统计及当前选择；执行区与底部状态栏绑定同一个选择摘要，选择、取消选择、重命名及设备断开后同步更新。
@@ -19,6 +20,7 @@
   - 统计、完整摘要与紧凑底栏共享 App 变量；窗口内容超高时通过页面滚动访问，不裁掉关键操作。布局及摘要换行由 `ui_layout.py` 维护。
 - **最新安装包**：APK/HAP 默认选中最新文件，下拉列表按修改时间展示目录内全部候选；下拉面板最多显示 10 行，更多候选通过滚动访问。
 - **联动刷新**：界面的“刷新设备”和“扫描最新包”按钮都会触发设备检测与当前安装包目录扫描，设备刷新期间两个入口同步禁用。
+- **Harmony 部分探测失败**：刷新日志保留原因和可用 Android 数量；恢复后首次普通刷新重新记录成功，随后继续去重。安装前若原选择包含 Harmony 或无法确认的平台则停止；纯 Android 选择可继续，避免自动转移到其他设备。
 - **安装前刷新**：点击安装后立即记录请求目标，再刷新设备列表；校验完成日志包含耗时，并使用点击瞬间的设备 ID 快照显式恢复仍在线设备的选中状态。已选设备断开会提示，若仅剩单设备则默认安装到该设备。
 - **安装状态**：安装中按钮文案切换为“中止安装”，请求中止后显示“正在中止…”并禁用，任务结束后恢复。
   - 单个命令非零退出显示“安装失败”，有目标被跳过显示“安装未完成”，运行异常显示“安装异常”；仅用户主动中止显示“已中止”。安装前探测异常也恢复操作状态，并同步日志和提示。
@@ -33,7 +35,7 @@
   - 日志在命令启动前同步冻结完整命令及时间戳，再交由 Tk 主线程按队列渲染；命令返回后记录返回码、执行耗时，并逐行保留标准输出和错误输出。
 - **UDID 获取**：设备列表“获取UDID”按钮支持对 NEXT（Harmony）设备执行 `hdc -t <device_id> shell bm get --udid`；仅在命令返回成功且输出有效时才展示并复制 UDID，Android 设备会提示仅支持 NEXT。
 - **崩溃日志采集**：设备列表“获取崩溃日志”按钮会根据选中设备平台自动分发；Android 执行 `adb -s <device_id> shell dumpsys dropbox --print` 并追加写入日志文件，Harmony 拉取 `/data/log/faultlog/faultlogger` 后筛选最近 7 天含 `crash` 关键字的文件并打包为 zip。
-- **NEXTdemo 日志采集**：设备列表新增“获取NEXTdemo日志”按钮，按相对路径 `haps/entry/files/log-ads` 在 `/data/app` 下匹配目录并打包为 zip。
+- **NEXTdemo 日志采集**：设备列表新增“获取NEXTdemo日志”按钮，按相对路径 `haps/entry/files/log-ads` 在 `/data/app` 下匹配目录并打包为 zip；任一拉取命令失败均返回该命令的返回码和输出，不把失败或不完整拉取当作空结果成功。
 - **日志输出目录**：Windows 默认输出到 `D:\`；非 Windows 输出到 `~/install_new_apk_hap_logs`。
 - **Windows 运行**：调用 adb/hdc 时使用无控制台模式，避免弹窗闪现。
 - **配置文件**：`%APPDATA%/install_new_apk_hap/app_config.json`（Windows）
@@ -42,7 +44,7 @@
   - `apk_needs_t`：需要 `-t` 的 APK 名称列表；保存按钮会按当前复选框状态新增或删除对应记忆
   - **生成规则**：首次运行自动创建；exe 运行后在 AppData 目录生成/更新
 - **自动化打包**：GitHub Actions 在 Windows 环境使用 PyInstaller 生成 exe，可手动触发或打 tag；tag 触发时会将 exe 上传到 release assets。
-  - 当前候选版本 `v0.6.0`；分支手动构建的版本输入必须匹配 `VERSION`，产物仍需按运行 SHA 区分。PR 交付不等于正式 tag/Release 发布。
+  - 当前候选版本 `v0.7.0`；分支手动构建的版本输入必须匹配 `VERSION`，产物仍需按运行 SHA 区分。PR 交付不等于正式 tag/Release 发布。
 - **PR 验证**：`tests.yml` 在 PR 和 main push 时运行 Windows/Python 3.11 测试，包含真实 Tk 事件及窗口布局检查，不执行设备命令或发布制品。
   - `pytest.ini` 使用 `--capture=sys` 保留 Python 输出捕获，避免 Windows 文件描述符捕获造成间歇性的 Tcl 库读取失败；布局测试逐项隔离 Tk 窗口和状态。
 
@@ -61,7 +63,8 @@
 - `src/ui_styles.py`：现有视觉常量与窗口/Treeview 配置，保留原生 ttk 主题
 - `src/ui_widgets.py`：页面滚动、焦点显露、窗口内滚轮与动作换行；无业务状态或设备服务
 - `src/ui_display.py`：无 Tk 依赖的显示格式化；不持有运行状态或执行设备命令
-- `src/services/device_detector.py`：设备检测
+- `src/services/hdc.py`：共享 HDC 路径解析与配置错误
+- `src/services/device_detector.py`：设备检测与 Harmony 诊断
 - `src/services/package_scanner.py`：扫描最新 apk/hap
 - `src/services/installer.py`：安装执行
 - `src/config_manager.py`：配置加载/保存
