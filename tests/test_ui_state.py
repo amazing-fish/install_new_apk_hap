@@ -3,6 +3,7 @@
 import os
 import sys
 from pathlib import Path
+from tkinter import font as tkfont
 
 import pytest
 
@@ -167,8 +168,14 @@ def test_default_and_desktop_layout_keep_install_and_log_visible(app):
     for geometry in ("500x600", "800x700"):
         app.geometry(geometry)
         app.update()
+        log_font = tkfont.Font(root=app, font=app.log_text.cget("font"))
+        log_min_height = log_font.metrics("linespace") + 2 * (
+            int(app.log_text.cget("pady")) + int(app.log_text.cget("borderwidth"))
+            + int(app.log_text.cget("highlightthickness"))
+        )
         for widget in (app.install_button, app.log_text, app.status_selection_label):
             assert widget.winfo_ismapped()
-            assert widget.winfo_height() >= 20
+            required_height = log_min_height if widget is app.log_text else widget.winfo_reqheight()
+            assert widget.winfo_height() >= required_height
             y = widget.winfo_rooty() - app.winfo_rooty()
             assert 0 <= y < y + widget.winfo_height() <= app.winfo_height()
