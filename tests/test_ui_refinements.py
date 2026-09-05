@@ -13,12 +13,12 @@ def show(app, width=None):
     app.update()
 
 
-def test_device_area_keeps_six_rows_with_few_devices(app):
+def test_device_area_keeps_four_rows_with_few_devices(app):
     show(app)
-    for count in (0, 1, 2, 6):
+    for count in (0, 1, 2, 4):
         app._apply_device_refresh([DeviceInfo(str(i), 'android', 'device') for i in range(count)])
         app.update()
-        assert int(app.device_tree.cget('height')) >= 6
+        assert int(app.device_tree.cget('height')) == 4
 
 
 def test_initial_width_fits_four_device_columns(app):
