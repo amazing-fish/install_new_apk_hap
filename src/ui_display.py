@@ -53,10 +53,13 @@ def format_selected_device_summary(
     return f"已选 {len(selected_ids)} 台：{format_device_ids_for_log(selected_ids, name_mapping)}"
 
 
-def format_package_summary(apk_path: Optional[Path], hap_path: Optional[Path]) -> str:
+def format_package_summary(
+    apk_path: Optional[Path], hap_path: Optional[Path],
+    apk_name: Optional[str] = None, hap_name: Optional[str] = None,
+) -> str:
     parts = []
-    if apk_path is not None:
-        parts.append(f"APK {apk_path.name}")
-    if hap_path is not None:
-        parts.append(f"HAP {hap_path.name}")
+    for platform, path, name in (('APK', apk_path, apk_name), ('HAP', hap_path, hap_name)):
+        if path is not None:
+            display = f'{name}（{path.name}）' if name else path.name
+            parts.append(f'{platform} {display}')
     return " · ".join(parts) or "未找到可安装包"

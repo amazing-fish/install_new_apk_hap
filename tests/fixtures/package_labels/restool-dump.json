@@ -1,0 +1,13 @@
+{
+	"bundleName":	"com.example.labels",
+	"moduleName":	"entry",
+	"resource":	[{
+			"id":	16777216,
+			"name":	"app_name",
+			"type":	"string",
+			"entryCount":	1,
+			"entryValues":	[{
+					"value":	"Demo 默认名称"
+				}]
+		}]
+}
