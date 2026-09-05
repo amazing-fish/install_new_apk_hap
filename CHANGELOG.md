@@ -2,7 +2,7 @@
 
 ## v0.7.0 - feature（待发布）
 - 统一所有 Harmony 调用的 HDC 路径解析，支持 HDC_EXECUTABLE、HDC_PATH、DEVECO_SDK_HOME、PATH 及 Windows 常见 DevEco SDK 目录；显式配置无效时直接诊断，不静默换工具。
-- HDC 缺失、无法启动、命令失败与空设备列表分开处理；检测结果保留可用 Android 设备，恢复后重新记录正常刷新。安装前 Harmony 校验失败不会改装到 Android。
+- HDC 缺失、无法启动、命令失败与空设备列表分开处理；检测结果保留可用 Android 设备，恢复后重新记录正常刷新。HDC 部分探测失败不自动改选其他设备，安装前只允许明确选择的纯 Android 请求继续，保留校验耗时。
 - 安装日志与实际安装共享已解析路径，NEXTdemo 的查找和拉取固定使用同一 HDC；拉取失败保留返回码和输出，继续保持 Windows 隐藏控制台及安装中止行为。
 - 补充路径优先级、带空格 SDK 路径、全部 Harmony 调用、失败/恢复及安装选择回归；UI 三阶段已由 PR #51 合入，本轮独立承接 Issue #47。
 

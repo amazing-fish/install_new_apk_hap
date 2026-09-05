@@ -203,7 +203,18 @@ def test_refresh_diagnostic_and_recovery_are_visible(app, monkeypatch):
     assert app.log_text.get('1.0', 'end') == recovered
 
 
-@pytest.mark.parametrize('selected', [{'harmony-a'}, {'android-a'}])
+def test_partial_refresh_does_not_replace_harmony_selection(app):
+    android = DeviceInfo('android-a', 'android', 'device')
+    app._apply_device_refresh([android, DeviceInfo('harmony-a', 'harmony', 'device')])
+    app.device_tree.selection_set('harmony-a')
+    app._apply_device_refresh([android], harmony_error='HDC unavailable')
+    assert app.device_tree.selection() == ()
+    app.device_tree.selection_set('android-a')
+    app._apply_device_refresh([android], harmony_error='HDC unavailable')
+    assert app.device_tree.selection() == ('android-a',)
+
+
+@pytest.mark.parametrize('selected', [{'harmony-a'}, {'android-a'}, set()])
 def test_preinstall_hdc_failure_cannot_redirect_harmony_to_android(app, monkeypatch, selected):
     android = DeviceInfo('android-a', 'android', 'device')
     app._apply_device_refresh([android, DeviceInfo('harmony-a', 'harmony', 'device')])
@@ -218,8 +229,10 @@ def test_preinstall_hdc_failure_cannot_redirect_harmony_to_android(app, monkeypa
     monkeypatch.setattr(main.threading, 'Thread', Thread)
     app.after = lambda delay, callback, *args: callback(*args)
     app._prepare_install_worker(selected, Path('app.apk'), Path('app.hap'), False)
-    if selected == {'harmony-a'}:
+    if selected != {'android-a'}:
         assert not started
         assert app.install_status_var.get() == '安装异常'
     else:
         assert started[0][0] == ['android-a']
+        assert '安装前设备校验完成（耗时 ' in app.log_text.get('1.0', 'end')
+        assert 'Harmony 设备探测失败' in app.log_text.get('1.0', 'end')

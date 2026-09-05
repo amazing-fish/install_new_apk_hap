@@ -32,7 +32,7 @@
 | 1 | [#32 状态接入](https://github.com/amazing-fish/install_new_apk_hap/issues/32) | 已由 PR #49 合入；Issue 已关闭 | 列顺序、统计、选择/命名、包摘要、真实 Tk 回归与 PR 检查 |
 | 2 | [#33 布局与样式拆分](https://github.com/amazing-fish/install_new_apk_hap/issues/33) | PR #50 已合入；Issue 已关闭 | 布局/样式独立归属，App 保留状态和任务编排，行为不漂移 |
 | 3 | [#34 体验与窄窗口可达性](https://github.com/amazing-fish/install_new_apk_hap/issues/34) | PR #51 已合入；Issue #34 已关闭 | 工作流组织、平台/忙碌状态、长内容/多设备滚动与窗口走查 |
-| 独立后续 | [#47 HDC 路径统一](https://github.com/amazing-fish/install_new_apk_hap/issues/47) | 本分支实施；从 a6a9ffe 主线开始 | 共享可执行路径覆盖探测、UDID、安装及所有 Harmony 日志动作 |
+| 独立后续 | [#47 HDC 路径统一](https://github.com/amazing-fish/install_new_apk_hap/issues/47) | [PR #52](https://github.com/amazing-fish/install_new_apk_hap/pull/52) 实施；从 a6a9ffe 主线开始 | 共享可执行路径覆盖探测、UDID、安装及所有 Harmony 日志动作 |
 | 后续候选 | [#48 应用名解析](https://github.com/amazing-fish/install_new_apk_hap/issues/48) | 已建档，未实施 | 解析证据、显示标签与文件身份分离、损坏/重名/切换测试 |
 
 第一阶段只迁移显示格式化并接入摘要；保持安装命令、配置 schema、发布版本、刷新联动、全量候选、安装快照及日志时序。执行区和状态栏共享一个当前选择摘要；包摘要显示当前选择，已开始安装的参数仍以点击快照与请求日志为准。

@@ -217,7 +217,7 @@ class App(tk.Tk):
         ]
         if preserved_selection:
             self.device_tree.selection_set(*preserved_selection)
-        elif only_device_id:
+        elif only_device_id and not harmony_error:
             self.device_tree.selection_set(only_device_id)
         self.device_summary_var.set(format_device_summary(self.devices))
         fit_device_columns(self.device_tree)
@@ -226,6 +226,8 @@ class App(tk.Tk):
         harmony_count = sum(1 for device in self.devices if device.platform == "harmony")
         total_count = len(self.devices)
         if harmony_error:
+            if summary_label != "设备列表已刷新":
+                self.log(f"{summary_label}：Android {android_count} 台，Harmony 探测失败")
             self.log(f"Harmony 设备探测失败：{harmony_error}；已保留检测到的 Android {android_count} 台")
         elif log_result and total_count == 0:
             self.log(f"{summary_label}：未检测到设备")
@@ -528,7 +530,7 @@ class App(tk.Tk):
     ) -> None:
         if harmony_error:
             android_ids = {d.device_id for d in self.devices if d.platform == "android"}
-            if previous_selection - android_ids:
+            if not previous_selection or previous_selection - android_ids:
                 self._apply_install_preparation_error(RuntimeError(harmony_error))
                 return
         self._apply_device_refresh(
