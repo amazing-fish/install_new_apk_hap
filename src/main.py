@@ -22,6 +22,15 @@ from services.installer import (
     run_harmony_recent_crash_zip,
 )
 from services.package_scanner import find_latest_packages
+from ui_display import (
+    DEVICE_DISPLAY_COLUMNS,
+    format_device_ids_for_log,
+    format_device_summary,
+    format_device_tree_values,
+    format_package_summary,
+    format_selected_device_summary,
+    get_device_display_name,
+)
 
 
 @dataclass(frozen=True)
@@ -48,15 +57,6 @@ def build_crash_log_target(device: DeviceInfo, output_dir: Path) -> CrashLogTarg
     raise ValueError(f"unsupported device platform: {device.platform}")
 
 
-def get_device_display_name(device_id: str, name_mapping: Dict[str, str]) -> str:
-    name = name_mapping.get(device_id, "").strip()
-    return name or device_id
-
-
-def format_device_ids_for_log(device_ids: Iterable[str], name_mapping: Dict[str, str]) -> str:
-    return "，".join(get_device_display_name(device_id, name_mapping) for device_id in device_ids)
-
-
 def format_command_for_log(command: Iterable[str]) -> str:
     return subprocess.list2cmdline(list(command))
 
@@ -79,6 +79,9 @@ class App(tk.Tk):
         self.installing = False
         self.install_stop_event = threading.Event()
         self.install_status_var = tk.StringVar(value="就绪")
+        self.device_summary_var = tk.StringVar(value=format_device_summary(self.devices))
+        self.selected_device_summary_var = tk.StringVar(value="未选择设备")
+        self.package_summary_var = tk.StringVar(value=format_package_summary(None, None))
         self.udid_fetching = False
         self.crash_log_fetching = False
         self.device_ids_before_last_refresh: Optional[Set[str]] = None
@@ -89,16 +92,28 @@ class App(tk.Tk):
         self.load_last_scan_dir()
 
     def _build_ui(self) -> None:
+        status_bar = ttk.Frame(self)
+        status_bar.pack(side=tk.BOTTOM, fill=tk.X, padx=12, pady=(0, 6))
+        ttk.Label(status_bar, textvariable=self.install_status_var).pack(side=tk.LEFT, padx=(0, 8))
+        self.status_selection_label = self._add_summary_label(
+            status_bar, self.selected_device_summary_var
+        )
+
         container = ttk.Frame(self)
         container.pack(fill=tk.BOTH, expand=True, padx=12, pady=12)
 
         device_frame = ttk.LabelFrame(container, text="设备列表")
         device_frame.pack(fill=tk.BOTH, expand=False)
+        device_heading = ttk.Frame(device_frame)
+        ttk.Label(device_heading, text="设备列表").pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Label(device_heading, textvariable=self.device_summary_var).pack(side=tk.LEFT)
+        device_frame.configure(labelwidget=device_heading)
 
         columns = ("device_id", "name", "status", "platform")
         self.device_tree = ttk.Treeview(
             device_frame,
             columns=columns,
+            displaycolumns=DEVICE_DISPLAY_COLUMNS,
             show="headings",
             selectmode="extended",
             height=1,
@@ -120,7 +135,7 @@ class App(tk.Tk):
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
 
         button_frame = ttk.Frame(container)
-        button_frame.pack(fill=tk.X, pady=8)
+        button_frame.pack(fill=tk.X, pady=3)
 
         self.refresh_button = ttk.Button(
             button_frame,
@@ -140,7 +155,7 @@ class App(tk.Tk):
         self.nextdemo_log_button.pack(side=tk.LEFT, padx=6)
 
         name_frame = ttk.Frame(container)
-        name_frame.pack(fill=tk.X, pady=8)
+        name_frame.pack(fill=tk.X, pady=3)
         name_frame.columnconfigure(1, weight=1)
 
         ttk.Label(name_frame, text="自定义名称:").grid(row=0, column=0)
@@ -158,7 +173,7 @@ class App(tk.Tk):
         )
 
         folder_frame = ttk.LabelFrame(container, text="安装包目录")
-        folder_frame.pack(fill=tk.X, pady=8)
+        folder_frame.pack(fill=tk.X, pady=3)
         self.folder_var = tk.StringVar()
         ttk.Entry(folder_frame, textvariable=self.folder_var).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=6, pady=6)
         ttk.Button(folder_frame, text="选择目录", command=self.choose_folder).pack(side=tk.LEFT, padx=6)
@@ -170,7 +185,7 @@ class App(tk.Tk):
         self.scan_button.pack(side=tk.LEFT)
 
         package_frame = ttk.LabelFrame(container, text="最新安装包")
-        package_frame.pack(fill=tk.X, pady=8)
+        package_frame.pack(fill=tk.X, pady=3)
 
         apk_row = ttk.Frame(package_frame)
         apk_row.pack(fill=tk.X, padx=6, pady=2)
@@ -205,9 +220,13 @@ class App(tk.Tk):
         ttk.Button(package_frame, text="保存此 APK 的 -t 设置", command=self.remember_apk_need_t).pack(
             anchor=tk.W, padx=6, pady=2
         )
+        self._add_summary_label(package_frame, self.package_summary_var)
 
+        self.execution_selection_label = self._add_summary_label(
+            container, self.selected_device_summary_var
+        )
         install_frame = ttk.Frame(container)
-        install_frame.pack(fill=tk.X, pady=8)
+        install_frame.pack(fill=tk.X, pady=3)
         self.install_button = ttk.Button(
             install_frame, text="安装到所选设备", command=self.install_to_selected
         )
@@ -216,7 +235,7 @@ class App(tk.Tk):
         ttk.Label(install_frame, textvariable=self.install_status_var).pack(side=tk.LEFT)
 
         log_frame = ttk.LabelFrame(container, text="日志")
-        log_frame.pack(fill=tk.BOTH, expand=True, pady=8)
+        log_frame.pack(fill=tk.BOTH, expand=True, pady=3)
         log_button_frame = ttk.Frame(log_frame)
         log_button_frame.pack(fill=tk.X, padx=6, pady=(6, 0))
         ttk.Button(log_button_frame, text="复制日志", command=self.copy_log).pack(side=tk.LEFT)
@@ -224,6 +243,12 @@ class App(tk.Tk):
         self.log_text = tk.Text(log_frame, height=12)
         self.log_text.pack(fill=tk.BOTH, expand=True)
         self.log_text.configure(state=tk.DISABLED)
+
+    def _add_summary_label(self, parent: ttk.Frame, variable: tk.StringVar) -> ttk.Label:
+        label = ttk.Label(parent, textvariable=variable, wraplength=460)
+        label.pack(fill=tk.X, pady=2)
+        label.bind("<Configure>", lambda event: label.configure(wraplength=max(1, event.width - 4)))
+        return label
 
     def _get_config_path(self) -> Path:
         appdata = os.getenv("APPDATA")
@@ -320,12 +345,11 @@ class App(tk.Tk):
         name_mapping: Dict[str, str] = self.config_manager.data.get("device_names", {})
         only_device_id: Optional[str] = None
         for device in self.devices:
-            name = name_mapping.get(device.device_id, "")
             self.device_tree.insert(
                 "",
                 tk.END,
                 iid=device.device_id,
-                values=(device.device_id, name, device.status, device.platform),
+                values=format_device_tree_values(device, name_mapping),
                 tags=("new_device",) if device.device_id in new_device_ids else (),
             )
             if len(self.devices) == 1:
@@ -335,15 +359,10 @@ class App(tk.Tk):
         ]
         if preserved_selection:
             self.device_tree.selection_set(*preserved_selection)
-            if len(preserved_selection) == 1:
-                current_name = self.device_tree.set(preserved_selection[0], "name")
-                self.name_var.set(current_name)
-            else:
-                self.name_var.set("")
         elif only_device_id:
             self.device_tree.selection_set(only_device_id)
-            current_name = self.device_tree.set(only_device_id, "name")
-            self.name_var.set(current_name)
+        self.device_summary_var.set(format_device_summary(self.devices))
+        self.on_device_select(None)
         android_count = sum(1 for device in self.devices if device.platform == "android")
         harmony_count = sum(1 for device in self.devices if device.platform == "harmony")
         total_count = len(self.devices)
@@ -363,13 +382,19 @@ class App(tk.Tk):
         display_count = max(1, min(len(self.devices), self._DEVICE_LIST_MAX_ROWS))
         self.device_tree.configure(height=display_count)
 
-    def on_device_select(self, _event: tk.Event) -> None:
+    def _update_selected_device_summary(self) -> None:
+        self.selected_device_summary_var.set(format_selected_device_summary(
+            self.device_tree.selection(), self.devices, self._device_name_mapping()
+        ))
+
+    def on_device_select(self, _event: Optional[tk.Event]) -> None:
+        self._update_selected_device_summary()
         selection = self.device_tree.selection()
         if len(selection) != 1:
             self.name_var.set("")
             return
         device_id = selection[0]
-        current_name = self.device_tree.set(device_id, "name")
+        current_name = self._device_name_mapping().get(device_id, "")
         self.name_var.set(current_name)
 
     def _single_selected_or_only_device_id(self) -> Optional[str]:
@@ -447,6 +472,7 @@ class App(tk.Tk):
         name = self.name_var.get().strip()
         self.config_manager.set_device_name(device_id, name)
         self.device_tree.set(device_id, "name", name)
+        self._update_selected_device_summary()
         self.log(f"已保存设备名称: {self._device_label(device_id)}")
 
     def choose_folder(self) -> None:
@@ -495,7 +521,11 @@ class App(tk.Tk):
         hap_name = self.latest_hap.name if self.latest_hap else "未找到"
         apk_needs_t = self.config_manager.data.get("apk_needs_t", [])
         self.apk_test_var.set(self.latest_apk is not None and self.latest_apk.name in apk_needs_t)
+        self._update_package_summary()
         self.log(f"已扫描最新安装包: APK={apk_name}, HAP={hap_name}")
+
+    def _update_package_summary(self) -> None:
+        self.package_summary_var.set(format_package_summary(self.latest_apk, self.latest_hap))
 
     def _update_package_options(
         self,
@@ -517,10 +547,12 @@ class App(tk.Tk):
         self.latest_apk = self.apk_name_map.get(selected_name)
         apk_needs_t = self.config_manager.data.get("apk_needs_t", [])
         self.apk_test_var.set(self.latest_apk is not None and self.latest_apk.name in apk_needs_t)
+        self._update_package_summary()
 
     def on_hap_selected(self, _event: tk.Event) -> None:
         selected_name = self.hap_var.get()
         self.latest_hap = self.hap_name_map.get(selected_name)
+        self._update_package_summary()
 
     def remember_apk_need_t(self) -> None:
         if not self.latest_apk:
@@ -618,8 +650,7 @@ class App(tk.Tk):
             if len(self.devices) == 1:
                 selection_list = [self.devices[0].device_id]
                 self.device_tree.selection_set(selection_list[0])
-                current_name = self.device_tree.set(selection_list[0], "name")
-                self.name_var.set(current_name)
+                self.on_device_select(None)
                 self.log(f"检测到单设备，默认安装到: {self._device_label(selection_list[0])}")
             else:
                 messagebox.showwarning("提示", "请先选择设备")
