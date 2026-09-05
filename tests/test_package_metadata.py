@@ -2,6 +2,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import struct
 import sys
 import zipfile
 
@@ -39,8 +40,17 @@ def test_sdk_compiled_resource_fixtures(monkeypatch, suffix, output, tools):
                         else [tools.aapt2, 'dump', 'badging', str(path.resolve())]]
 
 
+@pytest.mark.parametrize('name', ['@Home', '$Launch', "Sam\'s Tool"])
+def test_resolved_aapt_label_is_text_not_a_resource_reference(monkeypatch, name):
+    monkeypatch.setattr(metadata, '_run_tool', lambda command: f"application-label:'{name}'\r\n")
+    result = read_package_label(FIXTURES/'compiled.apk', MetadataTools(aapt2='aapt2'))
+    assert result.name == name and result.status == 'resolved'
+
+
 @pytest.mark.parametrize('document,status,name', [
     ({'app': {'label': '测试工具'}, 'module': {'name': 'entry'}}, 'resolved', '测试工具'),
+    ({'app': {'label': '@Home'}}, 'resolved', '@Home'),
+    ({'app': {'label': '$Launch'}}, 'resolved', '$Launch'),
     ({'app': {'label': '$string:app_name'}, 'module': {'name': 'entry'}}, 'unavailable', None),
     ({'app': {'bundleName': 'com.demo'}, 'module': {'name': 'entry', 'label': 'Module'}}, 'missing', None),
     ({'name': 'do not guess', 'appName': 'also not a contract'}, 'missing', None),
@@ -102,6 +112,24 @@ def test_rejects_duplicate_members_and_malformed_json(tmp_path):
     with pytest.warns(UserWarning), zipfile.ZipFile(path, 'a') as archive:
         archive.writestr('module.json', '{broken')
     assert read_package_label(path, MetadataTools()).status == 'invalid'
+
+
+def test_zip64_directory_cannot_bypass_legacy_size_check(tmp_path, monkeypatch):
+    path = hap(tmp_path, {'app': {'label': 'Should not be read'}})
+    data = path.read_bytes()
+    offset = data.rfind(b'PK\x05\x06')
+    record = list(struct.unpack_from('<4s4H2IH', data, offset))
+    size, start = record[5], record[6]
+    zip64 = struct.pack('<4sQ2H2I4Q', b'PK\x06\x06', 44, 45, 45, 0, 0,
+                        record[4], record[4], size, start)
+    locator = struct.pack('<4sIQI', b'PK\x06\x07', 0, offset, 1)
+    record[3], record[4], record[5] = 1, 1, 1
+    path.write_bytes(data[:offset] + zip64 + locator + struct.pack('<4s4H2IH', *record))
+    # Python follows ZIP64 despite the small, non-sentinel legacy values.
+    with zipfile.ZipFile(path) as archive:
+        assert len(archive.namelist()) == 2
+    monkeypatch.setattr(metadata, 'MAX_METADATA_BYTES', size - 1)
+    assert read_package_label(path, MetadataTools()).status == 'limited'
     with zipfile.ZipFile(path, 'w') as archive:
         archive.writestr('module.json', '{broken')
     assert read_package_label(path, MetadataTools()).status == 'invalid'

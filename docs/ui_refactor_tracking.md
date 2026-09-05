@@ -33,7 +33,7 @@
 | 2 | [#33 布局与样式拆分](https://github.com/amazing-fish/install_new_apk_hap/issues/33) | PR #50 已合入；Issue 已关闭 | 布局/样式独立归属，App 保留状态和任务编排，行为不漂移 |
 | 3 | [#34 体验与窄窗口可达性](https://github.com/amazing-fish/install_new_apk_hap/issues/34) | PR #51 已合入；Issue #34 已关闭 | 工作流组织、平台/忙碌状态、长内容/多设备滚动与窗口走查 |
 | 独立后续 | [#47 HDC 路径统一](https://github.com/amazing-fish/install_new_apk_hap/issues/47) | PR #52 已合入；Issue #47 已关闭 | 共享可执行路径覆盖探测、UDID、安装及所有 Harmony 日志动作 |
-| 后续候选 | [#48 应用名解析](https://github.com/amazing-fish/install_new_apk_hap/issues/48) | 从 747d95b 主线独立实施，待 PR 验证 | 解析证据、显示标签与文件身份分离、损坏/重名/切换测试 |
+| 后续候选 | [#48 应用名解析](https://github.com/amazing-fish/install_new_apk_hap/issues/48) | [PR #53](https://github.com/amazing-fish/install_new_apk_hap/pull/53) 独立实施，待合入 | 解析证据、显示标签与文件身份分离、损坏/重名/切换测试 |
 
 第一阶段只迁移显示格式化并接入摘要；保持安装命令、配置 schema、发布版本、刷新联动、全量候选、安装快照及日志时序。执行区和状态栏共享一个当前选择摘要；包摘要显示当前选择，已开始安装的参数仍以点击快照与请求日志为准。
 
@@ -79,3 +79,5 @@
 - SDK 编译样例已使用 AAPT2 8.9.1-12782657 / Android 35、Restool 5.1.0.008 实际验证；样例仅含元数据，不可作为设备安装包。完整测试、PR review 和当前 SHA 的 exe 证据在交付 PR 中登记。
 - 新元数据 IO 移入单 worker，等待请求只保留最新一个；缓存上限 256，文件或工具变动失效。目录枚举与排序仍同步，后续是否迁移整个扫描应由大目录/网络目录测量决定，不能把本地样例耗时当成所有环境保证。
 - 本轮不增加安装流程或配置 schema，不将旧 #27 标记已合入，不创建 tag 或正式 Release。
+
+- 独立审查已复现并修复 ZIP64 目录绕过读取上限、SDK 已解析名称以 @/$ 开头时被误判引用的问题；保留编译样例与原始 HAP 引用语义回归。

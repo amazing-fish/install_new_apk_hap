@@ -118,6 +118,11 @@ def _check_zip_directory(path: Path) -> None:
     offset = tail.rfind(b'PK\x05\x06')
     if offset < 0 or offset + 22 > len(tail):
         raise zipfile.BadZipFile('missing ZIP directory')
+    # ZipFile prefers the ZIP64 locator immediately before EOCD, even if the
+    # legacy count/size do not use ZIP64 sentinels. Do not validate one directory
+    # and then let ZipFile read a different, unbounded one.
+    if offset >= 20 and tail[offset - 20:offset - 16] == b'PK\x06\x07':
+        raise MetadataReadError('ZIP64 directory is unsupported')
     _, disk, start_disk, count_disk, count, length, _, comment = struct.unpack_from('<4s4H2IH', tail, offset)
     if offset + 22 + comment != len(tail) or disk or start_disk or count_disk != count:
         raise zipfile.BadZipFile('unsupported ZIP directory')
@@ -139,11 +144,11 @@ def _read_json(archive: zipfile.ZipFile, member: str) -> dict:
     return value
 
 
-def _literal(value: object, source: str) -> PackageLabel:
+def _literal(value: object, source: str, *, references: bool = False) -> PackageLabel:
     if not isinstance(value, str) or not value.strip():
         return PackageLabel(source=source)
     text = value.strip()
-    if text.startswith(('$', '@')):
+    if references and re.match(r'^\$[A-Za-z_][A-Za-z_0-9]*:', text):
         return PackageLabel(status='unresolved', source=source)
     # Untrusted text must not introduce control characters or a huge UI label.
     if len(text) > 200 or any(ord(c) < 32 or ord(c) == 127 for c in text):
@@ -176,7 +181,7 @@ def _hap_label(archive: zipfile.ZipFile, path: Path, tool: str | None) -> Packag
         source = 'config.json:module.mainAbility.label'
     else:
         return PackageLabel(status='unsupported', source='HAP metadata')
-    label = _literal(value, source)
+    label = _literal(value, source, references=True)
     if label.status != 'unresolved':
         return label
     if not isinstance(value, str) or not re.fullmatch(r'\$string:[A-Za-z_][A-Za-z_0-9]*', value):
@@ -201,7 +206,7 @@ def _hap_label(archive: zipfile.ZipFile, path: Path, tool: str | None) -> Packag
         raise ValueError('entryValues must be an array')
     # A default string has no language/region/device/other qualifiers.
     defaults = [e['value'] for e in entries if isinstance(e, dict) and set(e) == {'value'}]
-    return _literal(defaults[0], source + '+restool:default') if len(defaults) == 1 else label
+    return _literal(defaults[0], source + '+restool:default', references=True) if len(defaults) == 1 else label
 
 
 def read_package_label(path: Path, tools: MetadataTools) -> PackageLabel:
