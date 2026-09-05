@@ -28,21 +28,11 @@ BUTTON_ACTIONS = [
 ]
 
 
-@pytest.fixture(scope="module")
-def tk_root():
-    root = tk.Tk()
-    root.withdraw()
-    try:
-        yield root
-    finally:
-        root.destroy()
-
-
 @pytest.fixture
-def layout(tk_root):
+def layout():
     # The same builder accepts only the Tk variables and callbacks it needs.
     # No config_manager, device services, or startup methods are provided.
-    host = tk.Toplevel(tk_root)
+    host = tk.Tk()
     host.withdraw()
     host.calls = []
     values = {

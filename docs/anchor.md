@@ -40,6 +40,7 @@
   - **生成规则**：首次运行自动创建；exe 运行后在 AppData 目录生成/更新
 - **自动化打包**：GitHub Actions 在 Windows 环境使用 PyInstaller 生成 exe，可手动触发或打 tag；tag 触发时会将 exe 上传到 release assets。
 - **PR 验证**：`tests.yml` 在 PR 和 main push 时运行 Windows/Python 3.11 测试，包含真实 Tk 事件及窗口布局检查，不执行设备命令或发布制品。
+  - `pytest.ini` 使用 `--capture=sys` 保留 Python 输出捕获，避免 Windows 文件描述符捕获造成间歇性的 Tcl 库读取失败；布局测试逐项隔离 Tk 窗口和状态。
 
 
 ## 代码分析基线（2026-05-28）
