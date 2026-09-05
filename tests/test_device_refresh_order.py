@@ -1,6 +1,7 @@
 import sys
 import subprocess
 import threading
+import pytest
 from pathlib import Path
 
 
@@ -77,6 +78,13 @@ class FakeConfig:
         self.data = {"device_names": names or {}}
 
 
+@pytest.fixture(autouse=True)
+def isolate_tk_column_measurement(monkeypatch):
+    # These tests cover refresh ordering with a non-Tk tree; real columns are
+    # exercised by test_ui_usability on the actual widget.
+    monkeypatch.setattr(main, 'fit_device_columns', lambda tree: None)
+
+
 def make_app(previous_device_ids, selection=(), names=None):
     app = object.__new__(main.App)
     app.device_tree = FakeTree(selection=selection)
@@ -86,10 +94,12 @@ def make_app(previous_device_ids, selection=(), names=None):
     app.config_manager = FakeConfig(names=names)
     app.devices = []
     app.device_ids_before_last_refresh = previous_device_ids
+    app._last_device_refresh_snapshot = None
     app.refresh_button = FakeButton()
     app.scan_button = FakeButton()
     app.logged_messages = []
     app.log = app.logged_messages.append
+    app._update_device_actions = lambda: None
     return app
 
 
