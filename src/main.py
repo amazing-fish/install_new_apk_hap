@@ -23,7 +23,6 @@ from services.installer import (
 )
 from services.package_scanner import find_latest_packages
 from ui_display import (
-    DEVICE_DISPLAY_COLUMNS,
     format_device_ids_for_log,
     format_device_summary,
     format_device_tree_values,
@@ -31,6 +30,8 @@ from ui_display import (
     format_selected_device_summary,
     get_device_display_name,
 )
+from ui_layout import build_ui
+from ui_styles import DEVICE_LIST_MAX_ROWS, configure_window
 
 
 @dataclass(frozen=True)
@@ -62,13 +63,9 @@ def format_command_for_log(command: Iterable[str]) -> str:
 
 
 class App(tk.Tk):
-    _DEVICE_LIST_MAX_ROWS = 8
-    _PACKAGE_COMBO_VISIBLE_ROWS = 10
-
     def __init__(self) -> None:
         super().__init__()
-        self.title("APK/HAP 安装工具")
-        self.geometry("500x600")
+        configure_window(self)
 
         self.config_manager = ConfigManager(self._get_config_path())
         self.devices: List[DeviceInfo] = []
@@ -78,177 +75,23 @@ class App(tk.Tk):
         self.hap_name_map: Dict[str, Path] = {}
         self.installing = False
         self.install_stop_event = threading.Event()
-        self.install_status_var = tk.StringVar(value="就绪")
-        self.device_summary_var = tk.StringVar(value=format_device_summary(self.devices))
-        self.selected_device_summary_var = tk.StringVar(value="未选择设备")
-        self.package_summary_var = tk.StringVar(value=format_package_summary(None, None))
+        self.name_var = tk.StringVar(master=self)
+        self.folder_var = tk.StringVar(master=self)
+        self.apk_var = tk.StringVar(master=self, value="未找到")
+        self.hap_var = tk.StringVar(master=self, value="未找到")
+        self.apk_test_var = tk.BooleanVar(master=self, value=False)
+        self.install_status_var = tk.StringVar(master=self, value="就绪")
+        self.device_summary_var = tk.StringVar(master=self, value=format_device_summary(self.devices))
+        self.selected_device_summary_var = tk.StringVar(master=self, value="未选择设备")
+        self.package_summary_var = tk.StringVar(master=self, value=format_package_summary(None, None))
         self.udid_fetching = False
         self.crash_log_fetching = False
         self.device_ids_before_last_refresh: Optional[Set[str]] = None
         self._latest_refresh_request_id = 0
 
-        self._build_ui()
+        build_ui(self)
         self.refresh_devices()
         self.load_last_scan_dir()
-
-    def _build_ui(self) -> None:
-        status_bar = ttk.Frame(self)
-        status_bar.pack(side=tk.BOTTOM, fill=tk.X, padx=12, pady=(0, 6))
-        ttk.Label(status_bar, textvariable=self.install_status_var).pack(side=tk.LEFT, padx=(0, 8))
-        self.status_selection_label = self._add_summary_label(
-            status_bar, self.selected_device_summary_var
-        )
-
-        container = ttk.Frame(self)
-        container.pack(fill=tk.BOTH, expand=True, padx=12, pady=12)
-
-        device_frame = ttk.LabelFrame(container, text="设备列表")
-        device_frame.pack(fill=tk.BOTH, expand=False)
-        device_heading = ttk.Frame(device_frame)
-        ttk.Label(device_heading, text="设备列表").pack(side=tk.LEFT, padx=(0, 8))
-        ttk.Label(device_heading, textvariable=self.device_summary_var).pack(side=tk.LEFT)
-        device_frame.configure(labelwidget=device_heading)
-
-        columns = ("device_id", "name", "status", "platform")
-        self.device_tree = ttk.Treeview(
-            device_frame,
-            columns=columns,
-            displaycolumns=DEVICE_DISPLAY_COLUMNS,
-            show="headings",
-            selectmode="extended",
-            height=1,
-        )
-        self.device_tree.heading("device_id", text="设备码")
-        self.device_tree.heading("name", text="名称")
-        self.device_tree.heading("status", text="状态")
-        self.device_tree.heading("platform", text="平台")
-        self.device_tree.column("device_id", width=130)
-        self.device_tree.column("name", width=100)
-        self.device_tree.column("status", width=120)
-        self.device_tree.column("platform", width=120)
-        self.device_tree.tag_configure("new_device", background="#DFF6DD")
-        self.device_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        self.device_tree.bind("<<TreeviewSelect>>", self.on_device_select)
-
-        scrollbar = ttk.Scrollbar(device_frame, orient=tk.VERTICAL, command=self.device_tree.yview)
-        self.device_tree.configure(yscrollcommand=scrollbar.set)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-
-        button_frame = ttk.Frame(container)
-        button_frame.pack(fill=tk.X, pady=3)
-
-        self.refresh_button = ttk.Button(
-            button_frame,
-            text="刷新设备",
-            command=self.refresh_devices_and_packages,
-        )
-        self.refresh_button.pack(side=tk.LEFT)
-        self.udid_button = ttk.Button(button_frame, text="获取UDID", command=self.fetch_hdc_udid)
-        self.udid_button.pack(side=tk.LEFT, padx=6)
-        self.crash_log_button = ttk.Button(button_frame, text="获取崩溃日志", command=self.fetch_crash_log)
-        self.crash_log_button.pack(side=tk.LEFT)
-        self.nextdemo_log_button = ttk.Button(
-            button_frame,
-            text="获取NEXTdemo日志",
-            command=self.fetch_nextdemo_log,
-        )
-        self.nextdemo_log_button.pack(side=tk.LEFT, padx=6)
-
-        name_frame = ttk.Frame(container)
-        name_frame.pack(fill=tk.X, pady=3)
-        name_frame.columnconfigure(1, weight=1)
-
-        ttk.Label(name_frame, text="自定义名称:").grid(row=0, column=0)
-        self.name_var = tk.StringVar()
-        self.name_entry = ttk.Entry(name_frame, textvariable=self.name_var)
-        self.name_entry.grid(row=0, column=1, sticky=tk.EW, padx=6)
-        ttk.Button(name_frame, text="保存名称", command=self.save_device_name).grid(
-            row=0,
-            column=2,
-        )
-        ttk.Button(name_frame, text="复制设备码", command=self.copy_selected_device_id).grid(
-            row=0,
-            column=3,
-            padx=(6, 0),
-        )
-
-        folder_frame = ttk.LabelFrame(container, text="安装包目录")
-        folder_frame.pack(fill=tk.X, pady=3)
-        self.folder_var = tk.StringVar()
-        ttk.Entry(folder_frame, textvariable=self.folder_var).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=6, pady=6)
-        ttk.Button(folder_frame, text="选择目录", command=self.choose_folder).pack(side=tk.LEFT, padx=6)
-        self.scan_button = ttk.Button(
-            folder_frame,
-            text="扫描最新包",
-            command=self.refresh_devices_and_packages,
-        )
-        self.scan_button.pack(side=tk.LEFT)
-
-        package_frame = ttk.LabelFrame(container, text="最新安装包")
-        package_frame.pack(fill=tk.X, pady=3)
-
-        apk_row = ttk.Frame(package_frame)
-        apk_row.pack(fill=tk.X, padx=6, pady=2)
-        ttk.Label(apk_row, text="APK:").pack(side=tk.LEFT)
-        self.apk_var = tk.StringVar(value="未找到")
-        self.apk_combo = ttk.Combobox(
-            apk_row,
-            textvariable=self.apk_var,
-            state="disabled",
-            height=self._PACKAGE_COMBO_VISIBLE_ROWS,
-        )
-        self.apk_combo.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=6)
-        self.apk_combo.bind("<<ComboboxSelected>>", self.on_apk_selected)
-
-        hap_row = ttk.Frame(package_frame)
-        hap_row.pack(fill=tk.X, padx=6, pady=2)
-        ttk.Label(hap_row, text="HAP:").pack(side=tk.LEFT)
-        self.hap_var = tk.StringVar(value="未找到")
-        self.hap_combo = ttk.Combobox(
-            hap_row,
-            textvariable=self.hap_var,
-            state="disabled",
-            height=self._PACKAGE_COMBO_VISIBLE_ROWS,
-        )
-        self.hap_combo.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=6)
-        self.hap_combo.bind("<<ComboboxSelected>>", self.on_hap_selected)
-
-        self.apk_test_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(package_frame, text="APK 需要 -t 安装", variable=self.apk_test_var).pack(
-            anchor=tk.W, padx=6, pady=2
-        )
-        ttk.Button(package_frame, text="保存此 APK 的 -t 设置", command=self.remember_apk_need_t).pack(
-            anchor=tk.W, padx=6, pady=2
-        )
-        self._add_summary_label(package_frame, self.package_summary_var)
-
-        self.execution_selection_label = self._add_summary_label(
-            container, self.selected_device_summary_var
-        )
-        install_frame = ttk.Frame(container)
-        install_frame.pack(fill=tk.X, pady=3)
-        self.install_button = ttk.Button(
-            install_frame, text="安装到所选设备", command=self.install_to_selected
-        )
-        self.install_button.pack(side=tk.LEFT)
-        ttk.Label(install_frame, text="状态:").pack(side=tk.LEFT, padx=(12, 4))
-        ttk.Label(install_frame, textvariable=self.install_status_var).pack(side=tk.LEFT)
-
-        log_frame = ttk.LabelFrame(container, text="日志")
-        log_frame.pack(fill=tk.BOTH, expand=True, pady=3)
-        log_button_frame = ttk.Frame(log_frame)
-        log_button_frame.pack(fill=tk.X, padx=6, pady=(6, 0))
-        ttk.Button(log_button_frame, text="复制日志", command=self.copy_log).pack(side=tk.LEFT)
-        ttk.Button(log_button_frame, text="清空日志", command=self.clear_log).pack(side=tk.LEFT, padx=6)
-        self.log_text = tk.Text(log_frame, height=12)
-        self.log_text.pack(fill=tk.BOTH, expand=True)
-        self.log_text.configure(state=tk.DISABLED)
-
-    def _add_summary_label(self, parent: ttk.Frame, variable: tk.StringVar) -> ttk.Label:
-        label = ttk.Label(parent, textvariable=variable, wraplength=460)
-        label.pack(fill=tk.X, pady=2)
-        label.bind("<Configure>", lambda event: label.configure(wraplength=max(1, event.width - 4)))
-        return label
 
     def _get_config_path(self) -> Path:
         appdata = os.getenv("APPDATA")
@@ -379,7 +222,7 @@ class App(tk.Tk):
         self._set_refresh_state(False)
 
     def _update_device_tree_height(self) -> None:
-        display_count = max(1, min(len(self.devices), self._DEVICE_LIST_MAX_ROWS))
+        display_count = max(1, min(len(self.devices), DEVICE_LIST_MAX_ROWS))
         self.device_tree.configure(height=display_count)
 
     def _update_selected_device_summary(self) -> None:
