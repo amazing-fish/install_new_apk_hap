@@ -83,6 +83,10 @@ class MetadataReadError(ValueError):
     pass
 
 
+class MetadataToolError(ValueError):
+    """The SDK rejected the package; this does not prove corrupt metadata."""
+
+
 def _run_tool(command: list[str]) -> str:
     """Keep SDK time and captured output bounded, and hide Windows consoles."""
     with tempfile.TemporaryFile() as output:
@@ -99,7 +103,7 @@ def _run_tool(command: list[str]) -> str:
                 if os.fstat(output.fileno()).st_size > MAX_TOOL_OUTPUT:
                     raise MetadataReadError('tool output limit exceeded')
                 if process.returncode:
-                    raise ValueError('tool failed')
+                    raise MetadataToolError('tool failed')
             finally:
                 if process.poll() is None:
                     process.kill()
@@ -129,8 +133,13 @@ def _check_zip_directory(path: Path) -> None:
     _, disk, start_disk, count_disk, count, length, _, comment = struct.unpack_from('<4s4H2IH', tail, offset)
     if offset + 22 + comment != len(tail) or disk or start_disk or count_disk != count:
         raise zipfile.BadZipFile('unsupported ZIP directory')
-    if count == 65535 or count > 10000 or length > MAX_METADATA_BYTES:
+    if count == 65535 or length > MAX_METADATA_BYTES:
         raise MetadataReadError('ZIP directory limit exceeded')
+    # Each classic directory entry occupies at least 46 bytes. The byte budget
+    # already bounds allocations; a separate 10,000-entry cap rejects ordinary
+    # APKs even when their directory is well below that budget.
+    if count > length // 46:
+        raise zipfile.BadZipFile('ZIP entry count exceeds directory size')
 
 
 def _read_json(archive: zipfile.ZipFile, member: str) -> dict:
@@ -238,6 +247,8 @@ def read_package_label(path: Path, tools: MetadataTools) -> PackageLabel:
         return _literal(labels[0], 'aapt2:application-label:default') if len(labels) == 1 else PackageLabel(source='aapt2')
     except MetadataReadError:
         return PackageLabel(status='limited')
+    except MetadataToolError:
+        return PackageLabel(status='tool_failed', source='restool' if path.suffix.lower() == '.hap' else 'aapt2')
     except (OSError, ValueError, RuntimeError, KeyError, UnicodeError, RecursionError, zipfile.BadZipFile, NotImplementedError, zlib.error):
         return PackageLabel(status='invalid')
 
@@ -255,7 +266,12 @@ def package_display_labels(paths: list[Path], labels: dict[Path, PackageLabel]) 
         elif label.name and label.status == 'resolved':
             display = f'{label.name}（{path.name}）'
         else:
-            reason = f'缺少 {label.source}' if label.status == 'unavailable' else statuses.get(label.status, '名称未解析')
+            if label.status == 'unavailable':
+                reason = f'缺少 {label.source}'
+            elif label.status == 'tool_failed':
+                reason = f'{label.source} 解析失败'
+            else:
+                reason = statuses.get(label.status, '名称未解析')
             display = f'{path.name} [{reason}]'
         unique, number = display, 2
         while unique in result:

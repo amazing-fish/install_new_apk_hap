@@ -33,8 +33,10 @@ UDID 与 NEXTdemo 日志仅对单选 Harmony 设备启用；崩溃日志支持�
 - HAP Stage：读取 `module.json` 的 `app.label`；FA：读取 `config.json` 中 `module.mainAbility` 精确对应 Ability 的 `label`。字面名称无需 SDK；`$string:xxx` 由 `restool dump` 读取 `resources.index` 的默认值，存在 `labelId` 时同时校验 ID。依次寻找 `RESTOOL_EXECUTABLE`、PATH、已解析 HDC 同目录的 restool。
 - 两个可执行文件环境变量都是可选的完整路径；显式路径无效时不换用其他版本。exe 不捆绑 SDK，也不自动下载工具。缺少工具会显示 `[缺少 aapt2]` / `[缺少 restool]`，仍可按文件名选择和安装。
 - 本轮采用包的默认名称，不模拟设备语言。只有本地化值、别名/跨包引用、未知 JSON5/pack.info 格式均不猜测；下拉框区分资源未解析、未声明名称、格式不支持、读取失败与读取受限。模块 `name`、bundleName 和文件名不作为解析成功。名称中的控制字符、方向/格式控制符和段落分隔符会按读取失败处理，避免干扰真实文件名显示。
+- SDK 返回失败时显示 `[aapt2 解析失败]` / `[restool 解析失败]`，下次刷新重新尝试。此状态不能直接证明安装包损坏：例如 `RestoolV2 6.1.0.003` 资源无法被 `Restool 5.1.0.008` 读取，需要使用支持该资源格式的新版 SDK，并通过 `RESTOOL_EXECUTABLE` 指定工具路径。更新系统环境变量后应重启应用。
 
 元数据读取由单个后台线程执行；新扫描替换等待中的旧请求，过期目录结果丢弃。缓存最多 256 项，按文件和解析工具的路径、大小、纳秒时间及文件身份失效；读取失败下次刷新重试。名称更新不改当前选择，不追加逐包日志。单工具调用最长 5 秒、输出最多 4 MiB；ZIP 目录/JSON/manifest 最多 1 MiB、资源表最多 32 MiB，不将包内文件解压执行。
+ZIP 目录按实际字节数限制，不再额外限制为 10,000 个文件；目录大小和条目最小长度仍约束内存分配，ZIP64 与不一致的目录继续拒绝。
 
 格式依据：[Android AAPT2](https://developer.android.com/tools/aapt2)、[HarmonyOS restool](https://developer.huawei.com/consumer/cn/doc/doccenter-capabilities/restool)。SDK 生成的资源样例及复现方法见 `tests/fixtures/package_labels/README.md`。这些元数据样例不代表真机安装验收。
 
@@ -74,8 +76,8 @@ python src/main.py
 测试包含真实 Tk 控件和事件检查，需要带 Tkinter 和桌面显示的 Python 环境；设备命令使用替身，配置写入测试临时目录。
 PR 和主线提交会运行 Windows 测试检查；exe 打包仍通过原有手动/tag 流程触发。
 
-## v0.8.0 构建与发布
-本轮 `VERSION` 已更新为 `v0.8.0`；PR 分支的 exe 是待发布构建，不能当作已发布 Release。
-在 GitHub Actions 的 **Build Windows EXE** 中选择对应分支运行，或使用 `gh workflow run build-exe.yml --ref <分支名> -f version=v0.8.0`。
-成功后下载 `install_new_apk_hap-windows-v0.8.0` artifact 中的 `install_new_apk_hap.exe`（保留 30 天），以运行页面的提交 SHA 确认代码版本。
-正式发布需在合入后单独创建与 `VERSION` 一致的 `v0.8.0` 标签；标签流程通过测试和打包后才上传 Release asset。
+## v0.8.1 构建与发布
+本轮 `VERSION` 已更新为 `v0.8.1`；PR 分支的 exe 是待发布构建，不能当作已发布 Release。
+在 GitHub Actions 的 **Build Windows EXE** 中选择对应分支运行，或使用 `gh workflow run build-exe.yml --ref <分支名> -f version=v0.8.1`。
+成功后下载 `install_new_apk_hap-windows-v0.8.1` artifact 中的 `install_new_apk_hap.exe`（保留 30 天），以运行页面的提交 SHA 确认代码版本。
+正式发布需在合入后单独创建与 `VERSION` 一致的 `v0.8.1` 标签；标签流程通过测试和打包后才上传 Release asset。

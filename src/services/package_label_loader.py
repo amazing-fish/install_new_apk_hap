@@ -68,7 +68,7 @@ class PackageLabelLoader:
                         if fingerprint != file_fingerprint(path):
                             continue
                         # Retry transient read/tool failures on the next refresh.
-                        if label.status not in ('invalid', 'limited'):
+                        if label.status not in ('invalid', 'limited', 'tool_failed'):
                             cache[key] = label
                             cache.move_to_end(key)
                             while len(cache) > 256:

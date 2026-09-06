@@ -113,6 +113,17 @@ def test_hap_reference_id_must_match(monkeypatch, tmp_path):
     assert read_package_label(path, MetadataTools(restool='restool')).status == 'unresolved'
 
 
+@pytest.mark.parametrize('suffix,tool', [('hap', 'restool'), ('apk', 'aapt2')])
+def test_sdk_rejection_has_a_distinct_display_state(monkeypatch, suffix, tool):
+    def reject(command):
+        raise metadata.MetadataToolError('tool failed')
+    monkeypatch.setattr(metadata, '_run_tool', reject)
+    path = FIXTURES / f'compiled.{suffix}'
+    result = read_package_label(path, MetadataTools(**{tool: tool}))
+    assert result == PackageLabel(status='tool_failed', source=tool)
+    assert next(iter(package_display_labels([path], {path: result}))) == f'{path.name} [{tool} 解析失败]'
+
+
 def test_missing_tool_corruption_unsupported_and_size_limit(tmp_path):
     assert read_package_label(FIXTURES/'compiled.apk', MetadataTools()).status == 'unavailable'
     bad = tmp_path/'broken.apk'
@@ -160,6 +171,27 @@ def test_classic_zip_with_maximum_comment_keeps_literal_label(tmp_path):
     with zipfile.ZipFile(path, 'a') as archive:
         archive.comment = b'x' * 65535
     assert read_package_label(path, MetadataTools()).name == 'Maximum comment'
+
+
+@pytest.mark.parametrize('long_names', [False, True])
+def test_many_apk_entries_are_bounded_by_directory_bytes(tmp_path, monkeypatch, long_names):
+    path = tmp_path / 'many-files.apk'
+    with zipfile.ZipFile(path, 'w') as archive:
+        archive.writestr('AndroidManifest.xml', b'compiled manifest')
+        for index in range(12318):
+            archive.writestr(f'res/{index:05d}' + ('x' * 80 if long_names else ''), b'')
+    commands = []
+    def run(command):
+        commands.append(command)
+        return "application-label:'Many files'\n"
+    monkeypatch.setattr(metadata, '_run_tool', run)
+    if long_names:
+        # The directory byte budget must stop ZipFile's eager allocation.
+        monkeypatch.setattr(metadata.zipfile, 'ZipFile', lambda *a, **kw: pytest.fail('oversized directory opened'))
+    result = read_package_label(path, MetadataTools(aapt2='aapt2'))
+    assert result.status == ('limited' if long_names else 'resolved')
+    assert result.name == (None if long_names else 'Many files')
+    assert len(commands) == (0 if long_names else 1)
 
 
 def test_display_collision_cannot_overwrite_file_identity():

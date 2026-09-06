@@ -1,6 +1,7 @@
 from pathlib import Path
 import threading
 import time
+import pytest
 
 from services import package_label_loader as loader_module
 from services.package_label_loader import PackageLabelLoader
@@ -74,6 +75,24 @@ def test_worker_recovers_after_unexpected_parser_failure(tmp_path, monkeypatch):
         loader.submit([path])
         assert loader.results.get(timeout=3)[1][path].status == 'invalid'
         monkeypatch.setattr(loader_module, 'read_package_label', lambda *args: PackageLabel('Recovered', 'resolved'))
+        loader.submit([path])
+        assert loader.results.get(timeout=3)[1][path].name == 'Recovered'
+    finally:
+        loader.close()
+        loader._thread.join(timeout=3)
+
+
+@pytest.mark.parametrize('status', ['invalid', 'limited', 'tool_failed'])
+def test_failed_reads_are_retried_with_unchanged_files_and_tools(tmp_path, monkeypatch, status):
+    path = tmp_path / 'retry.hap'
+    path.touch()
+    monkeypatch.setattr(loader_module, 'resolve_metadata_tools', lambda: MetadataTools())
+    results = iter([PackageLabel(status=status), PackageLabel('Recovered', 'resolved')])
+    monkeypatch.setattr(loader_module, 'read_package_label', lambda *args: next(results))
+    loader = PackageLabelLoader()
+    try:
+        loader.submit([path])
+        assert loader.results.get(timeout=3)[1][path].status == status
         loader.submit([path])
         assert loader.results.get(timeout=3)[1][path].name == 'Recovered'
     finally:
