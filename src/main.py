@@ -1,4 +1,5 @@
 import os
+import queue
 import subprocess
 import threading
 import time
@@ -22,6 +23,8 @@ from services.installer import (
     run_harmony_recent_crash_zip,
 )
 from services.package_scanner import find_latest_packages
+from services.package_label_loader import PackageLabelLoader, file_fingerprint
+from services.package_metadata import package_display_labels
 from ui_display import (
     format_device_ids_for_log,
     format_device_summary,
@@ -92,6 +95,13 @@ class App(tk.Tk):
         self._latest_refresh_request_id = 0
         self._last_device_refresh_snapshot = None
         self._last_package_scan_snapshot = None
+        self._package_label_loader = PackageLabelLoader()
+        self._package_label_request = 0
+        self._package_label_poll = None
+        self._package_label_folder = ""
+        self._package_candidates = ([], [])
+        self._package_labels = {}
+        self.bind('<Destroy>', self._close_package_labels, add='+')
 
         build_ui(self)
         fit_initial_window(self, self.device_tree)
@@ -370,6 +380,9 @@ class App(tk.Tk):
             self.log("未找到上次扫描目录")
 
     def scan_latest_packages(self) -> None:
+        # Invalidate pending metadata even when the new directory is invalid.
+        self._package_label_loader.cancel()
+        self._package_label_request = 0
         folder = self.folder_var.get().strip()
         if not folder:
             self._last_package_scan_snapshot = None
@@ -395,6 +408,7 @@ class App(tk.Tk):
             messagebox.showwarning("提示", f"扫描安装包失败：{error}")
             return
         previous_selection = (self.latest_apk, self.latest_hap, self.apk_test_var.get())
+        self._package_labels = {}
         self.apk_name_map = {path.name: path for path in package_info.apk_candidates}
         self.hap_name_map = {path.name: path for path in package_info.hap_candidates}
         self.latest_apk = self._update_package_options(
@@ -412,9 +426,69 @@ class App(tk.Tk):
         if snapshot != self._last_package_scan_snapshot or selection != previous_selection:
             self.log(f"安装包扫描完成：{directory} · APK={apk_name}, HAP={hap_name}")
         self._last_package_scan_snapshot = snapshot
+        self._package_candidates = (package_info.apk_candidates, package_info.hap_candidates)
+        self._package_label_folder = folder
+        self._package_label_request = self._package_label_loader.submit(
+            package_info.apk_candidates + package_info.hap_candidates
+        )
+        if self._package_label_poll is None:
+            self._package_label_poll = self.after(50, self._poll_package_labels)
+
+    def _close_package_labels(self, event) -> None:
+        if event.widget is self:
+            self._package_label_loader.close()
+            if self._package_label_poll is not None:
+                self.after_cancel(self._package_label_poll)
+                self._package_label_poll = None
+
+    def _poll_package_labels(self) -> None:
+        self._package_label_poll = None
+        try:
+            generation, labels, fingerprints = self._package_label_loader.results.get_nowait()
+        except queue.Empty:
+            if self._package_label_request:
+                self._package_label_poll = self.after(50, self._poll_package_labels)
+            return
+        if generation != self._package_label_request:
+            if self._package_label_request:
+                self._package_label_poll = self.after(50, self._poll_package_labels)
+            return
+        if self.folder_var.get().strip() != self._package_label_folder:
+            return
+        current_labels = {}
+        for path, label in labels.items():
+            try:
+                if fingerprints.get(path) == file_fingerprint(path):
+                    current_labels[path] = label
+            except OSError:
+                pass
+        self._apply_package_labels(current_labels)
+
+    def _apply_package_labels(self, labels) -> None:
+        self._package_labels = labels
+        for paths, combo, var, selected, mapping_name in (
+            (self._package_candidates[0], self.apk_combo, self.apk_var, self.latest_apk, 'apk_name_map'),
+            (self._package_candidates[1], self.hap_combo, self.hap_var, self.latest_hap, 'hap_name_map'),
+        ):
+            mapping = package_display_labels(paths, labels)
+            setattr(self, mapping_name, mapping)
+            if not paths:
+                continue
+            combo.configure(values=list(mapping))
+            # A metadata refresh must preserve a choice made while it ran.
+            for display, path in mapping.items():
+                if path == selected:
+                    var.set(display)
+                    break
+        self._update_package_summary()
 
     def _update_package_summary(self) -> None:
-        self.package_summary_var.set(format_package_summary(self.latest_apk, self.latest_hap))
+        apk_label = self._package_labels.get(self.latest_apk)
+        hap_label = self._package_labels.get(self.latest_hap)
+        self.package_summary_var.set(format_package_summary(
+            self.latest_apk, self.latest_hap,
+            apk_label.name if apk_label else None, hap_label.name if hap_label else None,
+        ))
 
     def _update_package_options(
         self,

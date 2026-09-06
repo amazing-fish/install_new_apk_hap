@@ -61,7 +61,9 @@ def test_unchanged_refresh_does_not_append_logs(app, tmp_path, monkeypatch):
             first = app.log_text.get('1.0', 'end')
         else:
             assert app.log_text.get('1.0', 'end') == first
-    assert len(calls) == 3
+    # Linked device refreshes remain distinct; metadata uses one shared worker.
+    assert sum(target.__self__ is app for target, _args in calls) == 3
+    assert sum(target.__self__ is app._package_label_loader for target, _args in calls) == 1
     # Equal filenames must not conceal replacement contents.
     apk.write_bytes(b'a rebuilt package with different size')
     app.scan_latest_packages()

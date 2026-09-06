@@ -32,8 +32,8 @@
 | 1 | [#32 状态接入](https://github.com/amazing-fish/install_new_apk_hap/issues/32) | 已由 PR #49 合入；Issue 已关闭 | 列顺序、统计、选择/命名、包摘要、真实 Tk 回归与 PR 检查 |
 | 2 | [#33 布局与样式拆分](https://github.com/amazing-fish/install_new_apk_hap/issues/33) | PR #50 已合入；Issue 已关闭 | 布局/样式独立归属，App 保留状态和任务编排，行为不漂移 |
 | 3 | [#34 体验与窄窗口可达性](https://github.com/amazing-fish/install_new_apk_hap/issues/34) | PR #51 已合入；Issue #34 已关闭 | 工作流组织、平台/忙碌状态、长内容/多设备滚动与窗口走查 |
-| 独立后续 | [#47 HDC 路径统一](https://github.com/amazing-fish/install_new_apk_hap/issues/47) | [PR #52](https://github.com/amazing-fish/install_new_apk_hap/pull/52) 实施；从 a6a9ffe 主线开始 | 共享可执行路径覆盖探测、UDID、安装及所有 Harmony 日志动作 |
-| 后续候选 | [#48 应用名解析](https://github.com/amazing-fish/install_new_apk_hap/issues/48) | 已建档，未实施 | 解析证据、显示标签与文件身份分离、损坏/重名/切换测试 |
+| 独立后续 | [#47 HDC 路径统一](https://github.com/amazing-fish/install_new_apk_hap/issues/47) | PR #52 已合入；Issue #47 已关闭 | 共享可执行路径覆盖探测、UDID、安装及所有 Harmony 日志动作 |
+| 后续候选 | [#48 应用名解析](https://github.com/amazing-fish/install_new_apk_hap/issues/48) | [PR #53](https://github.com/amazing-fish/install_new_apk_hap/pull/53) 独立实施，待合入 | 解析证据、显示标签与文件身份分离、损坏/重名/切换测试 |
 
 第一阶段只迁移显示格式化并接入摘要；保持安装命令、配置 schema、发布版本、刷新联动、全量候选、安装快照及日志时序。执行区和状态栏共享一个当前选择摘要；包摘要显示当前选择，已开始安装的参数仍以点击快照与请求日志为准。
 
@@ -69,4 +69,17 @@
 - UI 三阶段 PR #51 于 2026-09-05T17:14:35Z 合入，merge `a6a9ffe5baa46dbfc6dd6909b3cf4f1495d091e1`；Issue #34 已关闭，四行设备区保持主线布局。
 - 新分支从该主线承接 #47：共享 HDC 解析入口覆盖探测、UDID、安装、crash 和 NEXTdemo；显式路径无效不回退，探测诊断与空列表分离，保留 Android 可用性。
 - 安装前 Harmony 探测失败不改装到其他平台；安装日志与执行固定同一路径，多步日志采集也只解析一次；NEXTdemo 拉取失败不再当作空结果成功。
-- 版本递增为待发布 v0.7.0，PR、Windows CI、Codex review 与 exe 证据登记在 Issue #47；未合入或正式发布。#48 应用名解析仍为下一候选。
+- PR #52 于 2026-09-05T17:51:26Z 合入，merge `747d95bb41e2c7d95a35aaed094cdc5794924b01`，Issue #47 已关闭；107 项回归通过。v0.7.0 exe 是 workflow 分支构建，不等同于正式 Release。
+
+## 应用名解析（Issue #48，开发中）
+
+- 从已合入 HDC 的主线 747d95b 开始；版本递增为 v0.8.0，保持四行设备区和紧凑布局。
+- 旧 #27 仅复用“显示名称与路径分离”的思路，不直接合并代码。其 APK 返回 None、HAP 任意 name 递归和正则 JSON5 不能证明应用名；独立说明行也不符合当前交互偏好。
+- 本轮 APK 使用可选 AAPT2 的默认 application-label；HAP 只读 Stage app.label / FA mainAbility.label，资源引用使用可选 restool 的默认字符串值。工具缺失、损坏、未知格式、仅本地化和引用无法解析均明确保留文件选择，不声称解析成功。
+- SDK 编译样例已使用 AAPT2 8.9.1-12782657 / Android 35、Restool 5.1.0.008 实际验证；样例仅含元数据，不可作为设备安装包。完整测试、PR review 和当前 SHA 的 exe 证据在交付 PR 中登记。
+- 新元数据 IO 移入单 worker，等待请求只保留最新一个；缓存上限 256，文件或工具变动失效。目录枚举与排序仍同步，后续是否迁移整个扫描应由大目录/网络目录测量决定，不能把本地样例耗时当成所有环境保证。
+- 本轮不增加安装流程或配置 schema，不将旧 #27 标记已合入，不创建 tag 或正式 Release。
+
+- 独立审查已复现并修复 ZIP64 目录绕过读取上限、SDK 已解析名称以 @/$ 开头时被误判引用的问题；保留编译样例与原始 HAP 引用语义回归。
+
+- v0.8.1 修复实际 APK 的 12,319 项目录误拦，保持字节上限；SDK 拒绝解析单独提示且不缓存失败。用户提供的原始 APK 配合 AAPT2 已读出名称；原始 HAP 使用 RestoolV2 6.1.0.003，本机 Restool 5.1.0.008 无法解析，新版工具验证尚待完成。
