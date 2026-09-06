@@ -1002,5 +1002,9 @@ class App(tk.Tk):
 
 
 if __name__ == "__main__":
+    import sys
+    if len(sys.argv) > 1:
+        from services.package_metadata_cli import run_cli
+        raise SystemExit(run_cli(sys.argv[1:]))
     app = App()
     app.mainloop()

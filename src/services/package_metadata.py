@@ -11,6 +11,7 @@ import re
 import shutil
 import struct
 import subprocess
+import sys
 import tempfile
 import time
 import unicodedata
@@ -48,11 +49,24 @@ def _configured_tool(variable: str) -> str | None:
     return _executable(Path(os.path.expandvars(value)).expanduser()) if value else None
 
 
+def bundled_tools_directory() -> Path | None:
+    """Only the frozen application's extraction directory is trusted as bundled."""
+    root = getattr(sys, '_MEIPASS', None) if getattr(sys, 'frozen', False) else None
+    return Path(root) / 'package_tools' if root else None
+
+
+def _bundled_tool(name: str) -> str | None:
+    directory = bundled_tools_directory()
+    return _executable(directory / name) if directory else None
+
+
 def resolve_metadata_tools() -> MetadataTools:
-    """Resolve once per scan. Invalid explicit overrides do not fall back."""
+    """Explicit overrides, then bundled tools in EXEs or SDK discovery in source."""
     suffix = '.exe' if os.name == 'nt' else ''
     if os.environ.get('AAPT2_EXECUTABLE', '').strip():
         aapt = _configured_tool('AAPT2_EXECUTABLE')
+    elif getattr(sys, 'frozen', False):
+        aapt = _bundled_tool('aapt2.exe')
     else:
         aapt = shutil.which('aapt2' + suffix)
         for variable in ('ANDROID_SDK_ROOT', 'ANDROID_HOME'):
@@ -69,6 +83,8 @@ def resolve_metadata_tools() -> MetadataTools:
                         break
     if os.environ.get('RESTOOL_EXECUTABLE', '').strip():
         restool = _configured_tool('RESTOOL_EXECUTABLE')
+    elif getattr(sys, 'frozen', False):
+        restool = _bundled_tool('restool.exe')
     else:
         restool = shutil.which('restool' + suffix)
         if not restool:
