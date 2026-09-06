@@ -1,5 +1,12 @@
 # 变更记录
 
+## v0.8.2 - bugfix（待发布）
+- Windows x64 单文件 exe 内置固定版本的 AAPT2 与 RestoolV2，直接下载即可读取支持格式的 APK/HAP 名称，不再依赖开发机 SDK 或启动脚本。
+- 显式工具路径覆盖保持优先；默认使用 onefile 自身解包目录，不被 PATH 中的旧 restool 抢先，也不从包目录寻找工具。
+- 构建校验工具及 NOTICE 的 SHA-256，并在无 SDK 配置环境中运行最终 exe，验证 APK、HAP v1/v2、内置工具字节及许可导出后才上传制品。
+- 新增无 GUI 的包名称诊断报告与第三方许可导出命令；工具来源、版本、完整许可声明纳入版本管理。
+- 本地 Conda 构建补齐 Tkinter 的 Tcl/Tk DLL 搜索路径，并清理打包缓存，修复启动时 `_tkinter` DLL 加载失败。
+
 ## v0.8.1 - bugfix（待发布）
 - 修复正常 APK 超过 10,000 个文件时被误拦：按既有 1 MiB ZIP 目录字节预算控制读取，保留 ZIP64、大小与结构校验。
 - SDK 拒绝解析与元数据读取失败分开显示，明确标出 aapt2/restool，并在下次刷新重试；文档补充 RestoolV2 与旧版 restool 不兼容时的处理方式。

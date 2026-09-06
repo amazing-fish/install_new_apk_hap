@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "platform": "windows-x64",
+  "tools": {
+    "aapt2": {
+      "version": "8.9.1-12782657",
+      "source": "https://dl.google.com/dl/android/maven2/com/android/tools/build/aapt2/8.9.1-12782657/aapt2-8.9.1-12782657-windows.jar",
+      "member": "aapt2.exe",
+      "notice": "AAPT2-NOTICE.txt"
+    },
+    "restool": {
+      "version": "RestoolV2 6.1.0.003",
+      "source": "https://developer.huawei.com/consumer/cn/download/command-line-tools-for-hmos",
+      "archive": "commandline-tools-windows-x64-6.1.1.300.zip",
+      "member": "command-line-tools/sdk/default/openharmony/toolchains/restool.exe",
+      "notice": "RESTOOL-NOTICE.txt",
+      "upstream_source": "https://github.com/openharmony/developtools_global_resource_tool",
+      "license_evidence": "The SDK NOTICE explicitly lists /toolchains/restool.exe in an Apache-2.0 section. The full toolchains NOTICE is retained."
+    }
+  },
+  "files": {
+    "AAPT2-NOTICE.txt": "1c0a082e6d1591229d5bc1f93b52bafafa26eb4d0628055f296bd754d26c462c",
+    "aapt2.exe": "eac70ec5367c823a96432a1afb9f4f2bcf077148d957ed96935a5b338a1b0392",
+    "RESTOOL-NOTICE.txt": "1b497f6825a7469f56e2f42c3fd310caf5943196214e33f26a7876ad73c56fbb",
+    "restool.exe": "d1f57100c8e5d3e449a9804d2057bf4abb2d2f50b8458662b25f79851bb5879e"
+  }
+}

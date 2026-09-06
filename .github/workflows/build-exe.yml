@@ -62,13 +62,24 @@ jobs:
         run: python -m pytest -q
 
       - name: Build EXE
-        run: pyinstaller --noconsole --onefile --name install_new_apk_hap src/main.py
+        run: python scripts/build_exe.py
+
+      - name: Verify standalone EXE without SDK configuration
+        run: python scripts/verify_exe.py dist/install_new_apk_hap.exe --output build/standalone-exe-validation.json
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: install_new_apk_hap-windows-${{ steps.version.outputs.version }}
           path: dist/install_new_apk_hap.exe
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload standalone verification evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: standalone-exe-validation-${{ steps.version.outputs.version }}
+          path: build/standalone-exe-validation.json
           if-no-files-found: error
           retention-days: 30
 

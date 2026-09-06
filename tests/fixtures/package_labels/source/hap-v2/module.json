@@ -1,0 +1,20 @@
+{
+  "app": {
+    "bundleName": "com.example.labels",
+    "vendor": "example",
+    "versionCode": 1,
+    "versionName": "1.0",
+    "label": "$string:app_name",
+    "minAPIVersion": 24,
+    "targetAPIVersion": 24
+  },
+  "module": {
+    "name": "entry",
+    "type": "entry",
+    "deviceTypes": [
+      "phone"
+    ],
+    "deliveryWithInstall": true,
+    "installationFree": false
+  }
+}
