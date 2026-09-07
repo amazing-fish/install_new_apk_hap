@@ -486,8 +486,14 @@ class App(tk.Tk):
         apk_label = self._package_labels.get(self.latest_apk)
         hap_label = self._package_labels.get(self.latest_hap)
         self.package_summary_var.set(format_package_summary(
-            self.latest_apk, self.latest_hap,
-            apk_label.name if apk_label else None, hap_label.name if hap_label else None,
+            self.latest_apk,
+            self.latest_hap,
+            apk_label.name if apk_label else None,
+            hap_label.name if hap_label else None,
+            apk_label.version_name if apk_label else None,
+            apk_label.version_code if apk_label else None,
+            hap_label.version_name if hap_label else None,
+            hap_label.version_code if hap_label else None,
         ))
 
     def _update_package_options(
