@@ -1,4 +1,4 @@
-"""Read application labels; never infer a label from arbitrary name fields.
+"""Read application labels and package versions without guessing metadata fields.
 
 Only trusted SDK executables are invoked, never files from inside a package.
 Resource labels use the package's default configuration, not the device locale.
@@ -32,6 +32,9 @@ class PackageLabel:
     name: str | None = None
     status: str = "missing"
     source: str = ""
+    package_name: str | None = None
+    version_name: str | None = None
+    version_code: int | None = None
 
 
 @dataclass(frozen=True)
@@ -184,16 +187,72 @@ def _literal(value: object, source: str, *, references: bool = False) -> Package
     return PackageLabel(text, 'resolved', source)
 
 
+def _metadata_text(value: object) -> str | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    text = value.strip()
+    if len(text) > 200 or any(unicodedata.category(c) in ('Cc', 'Cf', 'Cs', 'Zl', 'Zp') for c in text):
+        return None
+    return text
+
+
+def _version_code(value: object) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if value >= 0 else None
+    if isinstance(value, str) and re.fullmatch(r'\d+', value.strip()):
+        return int(value.strip())
+    return None
+
+
+def _with_metadata(
+    label: PackageLabel,
+    package_name: object = None,
+    version_name: object = None,
+    version_code: object = None,
+) -> PackageLabel:
+    return PackageLabel(
+        label.name,
+        label.status,
+        label.source,
+        _metadata_text(package_name),
+        _metadata_text(version_name),
+        _version_code(version_code),
+    )
+
+
+def _badging_package_fields(output: str) -> dict[str, str]:
+    lines = [line for line in output.splitlines() if line.startswith('package: ')]
+    if len(lines) != 1:
+        return {}
+    return {
+        match.group(1): match.group(2)
+        for match in re.finditer(r"([A-Za-z][A-Za-z0-9]*)='((?:\\.|[^'])*)'", lines[0])
+    }
+
+
 def _hap_label(archive: zipfile.ZipFile, path: Path, tool: str | None) -> PackageLabel:
     names = archive.namelist()
+    package_name = version_name = version_code = None
     if 'module.json' in names:
         document = _read_json(archive, 'module.json')
         app = document.get('app', {})
         if not isinstance(app, dict):
             raise ValueError('app must be an object')
+        package_name = app.get('bundleName')
+        version_name = app.get('versionName')
+        version_code = app.get('versionCode')
         value, resource_id, source = app.get('label'), app.get('labelId'), 'module.json:app.label'
     elif 'config.json' in names:
         document = _read_json(archive, 'config.json')
+        app = document.get('app', {})
+        if isinstance(app, dict):
+            package_name = app.get('bundleName')
+            version = app.get('version', {})
+            if isinstance(version, dict):
+                version_name = version.get('name')
+                version_code = version.get('code')
         module = document.get('module', {})
         if not isinstance(module, dict):
             raise ValueError('module must be an object')
@@ -204,37 +263,45 @@ def _hap_label(archive: zipfile.ZipFile, path: Path, tool: str | None) -> Packag
             raise ValueError('abilities must be an array')
         matches = [a for a in abilities if isinstance(a, dict) and main and a.get('name') == main]
         if len(matches) != 1:
-            return PackageLabel(source='config.json:module.mainAbility')
+            return _with_metadata(
+                PackageLabel(source='config.json:module.mainAbility'),
+                package_name, version_name, version_code,
+            )
         value, resource_id = matches[0].get('label'), matches[0].get('labelId')
         source = 'config.json:module.mainAbility.label'
     else:
         return PackageLabel(status='unsupported', source='HAP metadata')
+
     label = _literal(value, source, references=True)
-    if label.status != 'unresolved':
-        return label
-    if not isinstance(value, str) or not re.fullmatch(r'\$string:[A-Za-z_][A-Za-z_0-9]*', value):
-        return label
-    if not tool:
-        return PackageLabel(status='unavailable', source='restool')
-    if 'resources.index' not in names:
-        return label
-    if archive.getinfo('resources.index').file_size > MAX_RESOURCE_BYTES:
-        raise MetadataReadError('resource table limit exceeded')
-    document = json.loads(_run_tool([tool, 'dump', str(path.resolve())]))
-    resources = document.get('resource', []) if isinstance(document, dict) else []
-    if not isinstance(resources, list):
-        raise ValueError('resources must be an array')
-    matches = [r for r in resources if isinstance(r, dict) and r.get('type') == 'string'
-               and r.get('name') == value.split(':', 1)[1]
-               and (resource_id is None or r.get('id') == resource_id)]
-    if len(matches) != 1:
-        return label
-    entries = matches[0].get('entryValues', [])
-    if not isinstance(entries, list):
-        raise ValueError('entryValues must be an array')
-    # A default string has no language/region/device/other qualifiers.
-    defaults = [e['value'] for e in entries if isinstance(e, dict) and set(e) == {'value'}]
-    return _literal(defaults[0], source + '+restool:default', references=True) if len(defaults) == 1 else label
+    if label.status == 'unresolved' and isinstance(value, str) and re.fullmatch(r'\$string:[A-Za-z_][A-Za-z_0-9]*', value):
+        if not tool:
+            label = PackageLabel(status='unavailable', source='restool')
+        elif 'resources.index' in names:
+            if archive.getinfo('resources.index').file_size > MAX_RESOURCE_BYTES:
+                raise MetadataReadError('resource table limit exceeded')
+            try:
+                document = json.loads(_run_tool([tool, 'dump', str(path.resolve())]))
+                resources = document.get('resource', []) if isinstance(document, dict) else []
+                if not isinstance(resources, list):
+                    raise ValueError('resources must be an array')
+                matches = [r for r in resources if isinstance(r, dict) and r.get('type') == 'string'
+                           and r.get('name') == value.split(':', 1)[1]
+                           and (resource_id is None or r.get('id') == resource_id)]
+                if len(matches) == 1:
+                    entries = matches[0].get('entryValues', [])
+                    if not isinstance(entries, list):
+                        raise ValueError('entryValues must be an array')
+                    # A default string has no language/region/device/other qualifiers.
+                    defaults = [e['value'] for e in entries if isinstance(e, dict) and set(e) == {'value'}]
+                    if len(defaults) == 1:
+                        label = _literal(defaults[0], source + '+restool:default', references=True)
+            except MetadataToolError:
+                label = PackageLabel(status='tool_failed', source='restool')
+            except MetadataReadError:
+                label = PackageLabel(status='limited')
+            except (ValueError, KeyError, UnicodeError, RecursionError):
+                label = PackageLabel(status='invalid')
+    return _with_metadata(label, package_name, version_name, version_code)
 
 
 def read_package_label(path: Path, tools: MetadataTools) -> PackageLabel:
@@ -260,13 +327,30 @@ def read_package_label(path: Path, tools: MetadataTools) -> PackageLabel:
         output = _run_tool([tools.aapt2, 'dump', 'badging', str(path.resolve())])
         labels = [m.group(1) for line in output.splitlines()
                   if (m := re.fullmatch(r"application-label:'(.*)'", line))]
-        return _literal(labels[0], 'aapt2:application-label:default') if len(labels) == 1 else PackageLabel(source='aapt2')
+        label = _literal(labels[0], 'aapt2:application-label:default') if len(labels) == 1 else PackageLabel(source='aapt2')
+        package = _badging_package_fields(output)
+        return _with_metadata(
+            label,
+            package.get('name'),
+            package.get('versionName'),
+            package.get('versionCode'),
+        )
     except MetadataReadError:
         return PackageLabel(status='limited')
     except MetadataToolError:
         return PackageLabel(status='tool_failed', source='restool' if path.suffix.lower() == '.hap' else 'aapt2')
     except (OSError, ValueError, RuntimeError, KeyError, UnicodeError, RecursionError, zipfile.BadZipFile, NotImplementedError, zlib.error):
         return PackageLabel(status='invalid')
+
+
+def package_version_text(label: PackageLabel) -> str:
+    if label.version_name and label.version_code is not None:
+        return f'{label.version_name} ({label.version_code})'
+    if label.version_name:
+        return label.version_name
+    if label.version_code is not None:
+        return f'versionCode {label.version_code}'
+    return ''
 
 
 def package_display_labels(paths: list[Path], labels: dict[Path, PackageLabel]) -> dict[str, Path]:
@@ -279,16 +363,22 @@ def package_display_labels(paths: list[Path], labels: dict[Path, PackageLabel]) 
         label = labels.get(path)
         if label is None:
             display = path.name
-        elif label.name and label.status == 'resolved':
-            display = f'{label.name}（{path.name}）'
         else:
-            if label.status == 'unavailable':
-                reason = f'缺少 {label.source}'
-            elif label.status == 'tool_failed':
-                reason = f'{label.source} 解析失败'
+            version = package_version_text(label)
+            if label.name and label.status == 'resolved':
+                details = [label.name]
+                if version:
+                    details.append(version)
+                display = f'{" · ".join(details)}（{path.name}）'
             else:
-                reason = statuses.get(label.status, '名称未解析')
-            display = f'{path.name} [{reason}]'
+                if label.status == 'unavailable':
+                    reason = f'缺少 {label.source}'
+                elif label.status == 'tool_failed':
+                    reason = f'{label.source} 解析失败'
+                else:
+                    reason = statuses.get(label.status, '名称未解析')
+                display = f'{version}（{path.name}）' if version else path.name
+                display = f'{display} [{reason}]'
         unique, number = display, 2
         while unique in result:
             unique = f'{display} [{number}]'

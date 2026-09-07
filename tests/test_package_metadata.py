@@ -40,6 +40,68 @@ def test_sdk_compiled_resource_fixtures(monkeypatch, suffix, output, tools):
                         else [tools.aapt2, 'dump', 'badging', str(path.resolve())]]
 
 
+def test_apk_reads_package_and_version_from_same_badging_call(monkeypatch):
+    commands = []
+    output = (
+        "package: name='com.example.demo' versionCode='142' versionName='1.3.08.107' "
+        "compileSdkVersion='35'\n"
+        "application-label:'Demo App'\n"
+    )
+    def run(command):
+        commands.append(command)
+        return output
+    monkeypatch.setattr(metadata, '_run_tool', run)
+    path = FIXTURES / 'compiled.apk'
+    result = read_package_label(path, MetadataTools(aapt2='aapt2'))
+    assert result == PackageLabel(
+        'Demo App', 'resolved', 'aapt2:application-label:default',
+        'com.example.demo', '1.3.08.107', 142,
+    )
+    assert commands == [['aapt2', 'dump', 'badging', str(path.resolve())]]
+
+
+@pytest.mark.parametrize('member,document,expected', [
+    ('module.json', {
+        'app': {
+            'bundleName': 'com.example.stage',
+            'versionName': '2.3.4',
+            'versionCode': 234,
+            'label': 'Stage Demo',
+        },
+    }, ('com.example.stage', '2.3.4', 234, 'Stage Demo')),
+    ('config.json', {
+        'app': {
+            'bundleName': 'com.example.fa',
+            'version': {'name': '1.9.0', 'code': 190},
+        },
+        'module': {
+            'mainAbility': '.Main',
+            'abilities': [{'name': '.Main', 'label': 'FA Demo'}],
+        },
+    }, ('com.example.fa', '1.9.0', 190, 'FA Demo')),
+])
+def test_hap_reads_bundle_and_version_from_declared_metadata(tmp_path, member, document, expected):
+    result = read_package_label(hap(tmp_path, document, member), MetadataTools())
+    assert (result.package_name, result.version_name, result.version_code, result.name) == expected
+
+
+def test_hap_keeps_version_when_resource_label_tool_is_unavailable(tmp_path):
+    path = hap(tmp_path, {'app': {
+        'bundleName': 'com.example.demo',
+        'versionName': '3.0.1',
+        'versionCode': 301,
+        'label': '$string:app_name',
+    }})
+    result = read_package_label(path, MetadataTools())
+    assert result.status == 'unavailable' and result.source == 'restool'
+    assert (result.package_name, result.version_name, result.version_code) == (
+        'com.example.demo', '3.0.1', 301,
+    )
+    assert next(iter(package_display_labels([path], {path: result}))) == (
+        '3.0.1 (301)（demo.hap） [缺少 restool]'
+    )
+
+
 @pytest.mark.parametrize('name', ['@Home', '$Launch', "Sam\'s Tool"])
 def test_resolved_aapt_label_is_text_not_a_resource_reference(monkeypatch, name):
     monkeypatch.setattr(metadata, '_run_tool', lambda command: f"application-label:'{name}'\r\n")
@@ -120,8 +182,9 @@ def test_sdk_rejection_has_a_distinct_display_state(monkeypatch, suffix, tool):
     monkeypatch.setattr(metadata, '_run_tool', reject)
     path = FIXTURES / f'compiled.{suffix}'
     result = read_package_label(path, MetadataTools(**{tool: tool}))
-    assert result == PackageLabel(status='tool_failed', source=tool)
-    assert next(iter(package_display_labels([path], {path: result}))) == f'{path.name} [{tool} 解析失败]'
+    assert (result.status, result.source) == ('tool_failed', tool)
+    display = next(iter(package_display_labels([path], {path: result})))
+    assert path.name in display and f'{tool} 解析失败' in display
 
 
 def test_missing_tool_corruption_unsupported_and_size_limit(tmp_path):
@@ -200,6 +263,16 @@ def test_display_collision_cannot_overwrite_file_identity():
     assert list(result.values()) == [a, b, c]
     assert len(set(result)) == 3
     assert list(result)[-1] == 'Same（one.apk） [2]'
+
+
+def test_display_includes_resolved_name_and_version():
+    path = Path('demo.apk')
+    label = PackageLabel(
+        'Demo', 'resolved', 'aapt2', 'com.example.demo', '1.2.3', 42,
+    )
+    assert next(iter(package_display_labels([path], {path: label}))) == (
+        'Demo · 1.2.3 (42)（demo.apk）'
+    )
 
 
 def test_sdk_resolver_honors_overrides_and_numeric_versions(tmp_path, monkeypatch):

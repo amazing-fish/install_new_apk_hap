@@ -48,3 +48,15 @@ def test_selection_summary_uses_only_current_unique_ids_and_name_fallback():
 ])
 def test_package_summary_uses_selected_filenames(apk, hap, expected):
     assert format_package_summary(apk, hap) == expected
+
+
+def test_package_summary_includes_name_and_version_metadata():
+    assert format_package_summary(
+        Path("demo.apk"), Path("demo.hap"),
+        "Android Demo", "Harmony Demo",
+        "1.3.08.107", 142,
+        "2.0.0", 200,
+    ) == (
+        "APK Android Demo · 1.3.08.107 (142)（demo.apk） · "
+        "HAP Harmony Demo · 2.0.0 (200)（demo.hap）"
+    )

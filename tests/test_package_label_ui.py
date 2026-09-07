@@ -27,7 +27,10 @@ def test_background_label_update_preserves_choice_test_flag_and_logs(app, tmp_pa
         worker_threads.append(threading.get_ident())
         entered.set()
         assert release.wait(3)
-        return PackageLabel('同名应用', 'resolved')
+        return PackageLabel(
+            '同名应用', 'resolved', package_name='com.example.demo',
+            version_name='1.2.3', version_code=123,
+        )
     monkeypatch.setattr(loader_module, 'read_package_label', parse)
     app.folder_var.set(str(tmp_path))
     try:
@@ -46,7 +49,8 @@ def test_background_label_update_preserves_choice_test_flag_and_logs(app, tmp_pa
         pump_until(app, lambda: '同名应用' in app.apk_var.get())
         assert app.latest_apk == paths[0] and app.apk_test_var.get()
         assert app.apk_name_map[app.apk_var.get()] == paths[0]
-        assert app.package_summary_var.get() == 'APK 同名应用（old.apk）'
+        assert app.apk_var.get() == '同名应用 · 1.2.3 (123)（old.apk）'
+        assert app.package_summary_var.get() == 'APK 同名应用 · 1.2.3 (123)（old.apk）'
         assert app.log_text.get('1.0', 'end') == log_before
         assert all(t != threading.get_ident() for t in worker_threads)
         app.remember_apk_need_t()
