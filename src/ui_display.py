@@ -53,13 +53,34 @@ def format_selected_device_summary(
     return f"已选 {len(selected_ids)} 台：{format_device_ids_for_log(selected_ids, name_mapping)}"
 
 
+def _format_package_version(version_name: Optional[str], version_code: Optional[int]) -> str:
+    if version_name and version_code is not None:
+        return f"{version_name} ({version_code})"
+    if version_name:
+        return version_name
+    if version_code is not None:
+        return f"versionCode {version_code}"
+    return ""
+
+
 def format_package_summary(
     apk_path: Optional[Path], hap_path: Optional[Path],
     apk_name: Optional[str] = None, hap_name: Optional[str] = None,
+    apk_version_name: Optional[str] = None, apk_version_code: Optional[int] = None,
+    hap_version_name: Optional[str] = None, hap_version_code: Optional[int] = None,
 ) -> str:
     parts = []
-    for platform, path, name in (('APK', apk_path, apk_name), ('HAP', hap_path, hap_name)):
+    for platform, path, name, version_name, version_code in (
+        ('APK', apk_path, apk_name, apk_version_name, apk_version_code),
+        ('HAP', hap_path, hap_name, hap_version_name, hap_version_code),
+    ):
         if path is not None:
-            display = f'{name}（{path.name}）' if name else path.name
+            details = []
+            if name:
+                details.append(name)
+            version = _format_package_version(version_name, version_code)
+            if version:
+                details.append(version)
+            display = f'{" · ".join(details)}（{path.name}）' if details else path.name
             parts.append(f'{platform} {display}')
     return " · ".join(parts) or "未找到可安装包"
