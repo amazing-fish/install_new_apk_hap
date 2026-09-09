@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 import main
 from services.device_detector import DeviceInfo
 from services.package_metadata import PackageLabel
@@ -31,7 +33,7 @@ def _prepare_package(app, apk: Path, hap: Path | None = None):
         app.hap_var.set(hap.name)
 
 
-def test_pending_testonly_metadata_blocks_android_install_until_resolved(app, tmp_path, monkeypatch):
+def test_pending_testonly_metadata_blocks_known_android_until_resolved(app, tmp_path, monkeypatch):
     apk = tmp_path / 'test-only.apk'
     apk.touch()
     app._apply_device_refresh([DeviceInfo('a', 'android', 'device')])
@@ -42,7 +44,9 @@ def test_pending_testonly_metadata_blocks_android_install_until_resolved(app, tm
     app._update_apk_test_flag()
     app._update_device_actions()
 
-    assert app.apk_test_var.get() is False
+    # Unknown metadata uses the permissive install flag, while a known Android
+    # target is still gated until the exact parsed value arrives.
+    assert app.apk_test_var.get() is True
     assert app.install_button.instate(['disabled'])
     assert app.install_button.cget('text') == '等待 APK 解析…'
 
@@ -85,31 +89,79 @@ def test_harmony_only_install_is_not_blocked_by_pending_apk_metadata(app, tmp_pa
     app._update_apk_test_flag()
     app._update_device_actions()
 
+    assert app.apk_test_var.get() is True
     assert app.install_button.instate(['!disabled'])
     DeferredThread.created = []
     monkeypatch.setattr(main.threading, 'Thread', DeferredThread)
     app.install_to_selected()
     assert len(DeferredThread.created) == 1
     _target, args = DeferredThread.created[0]
-    assert args == ({'h'}, apk, hap, False)
+    assert args == ({'h'}, apk, hap, True)
 
 
-def test_parser_failure_releases_gate_and_uses_legacy_t_fallback(app, tmp_path):
-    apk = tmp_path / 'fallback.apk'
+def test_unknown_target_snapshots_safe_t_before_preflight_auto_selects_android(app, tmp_path, monkeypatch):
+    """Regression for P1: target becomes Android only after fresh preflight."""
+    apk = tmp_path / 'pending.apk'
+    apk.touch()
+    app._apply_device_refresh([
+        DeviceInfo('old-a', 'android', 'device'),
+        DeviceInfo('old-h', 'harmony', 'device'),
+    ])
+    app.device_tree.selection_remove(*app.device_tree.selection())
+    _prepare_package(app, apk)
+    app._package_metadata_pending = {apk}
+    app._update_apk_test_flag()
+    app._update_device_actions()
+
+    # With no selected target and multiple cached devices, preflight must decide
+    # the target. The snapshot is nevertheless safe because unknown => -t=True.
+    assert app.apk_test_var.get() is True
+    assert app.install_button.instate(['!disabled'])
+
+    DeferredThread.created = []
+    monkeypatch.setattr(main.threading, 'Thread', DeferredThread)
+    app.install_to_selected()
+    assert len(DeferredThread.created) == 1
+    _preflight_target, preflight_args = DeferredThread.created[0]
+    assert preflight_args == (set(), apk, None, True)
+
+    # Fresh detection now sees exactly one Android and auto-selects it.
+    app._finalize_install(
+        [DeviceInfo('fresh-a', 'android', 'device')],
+        *preflight_args,
+    )
+    assert len(DeferredThread.created) == 2
+    _install_target, install_args = DeferredThread.created[1]
+    assert install_args == (['fresh-a'], apk, None, True)
+
+
+@pytest.mark.parametrize('status,source', [
+    ('unavailable', 'aapt2'),
+    ('tool_failed', 'aapt2'),
+    ('invalid', ''),
+    ('limited', ''),
+])
+def test_parser_failure_releases_gate_and_defaults_to_installable_t(app, tmp_path, monkeypatch, status, source):
+    apk = tmp_path / f'{status}.apk'
     apk.touch()
     app._apply_device_refresh([DeviceInfo('a', 'android', 'device')])
     app.device_tree.selection_set('a')
     app.on_device_select(None)
     _prepare_package(app, apk)
-    app.config_manager.set_apk_need_t(apk.name, True)
     app._package_metadata_pending = {apk}
     app._update_apk_test_flag()
     app._update_device_actions()
+    assert app.apk_test_var.get() is True
     assert app.install_button.instate(['disabled'])
 
     app._apply_package_labels({
-        apk: PackageLabel(status='unavailable', source='aapt2'),
+        apk: PackageLabel(status=status, source=source),
     })
     assert apk not in app._package_metadata_pending
     assert app.apk_test_var.get() is True
     assert app.install_button.instate(['!disabled'])
+
+    DeferredThread.created = []
+    monkeypatch.setattr(main.threading, 'Thread', DeferredThread)
+    app.install_to_selected()
+    assert DeferredThread.created[0][1] == ({'a'}, apk, None, True)
