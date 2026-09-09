@@ -5,8 +5,6 @@ import sys
 from pathlib import Path
 from tkinter import font as tkfont
 
-import pytest
-
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import main
@@ -74,20 +72,16 @@ def test_stale_refresh_cannot_overwrite_summaries_or_selected_names(app):
     assert_selection_labels(app, "已选 1 台：new")
 
 
-def test_scan_dropdown_changes_empty_directory_and_test_flag(app, tmp_path):
+def test_scan_dropdown_changes_and_empty_directory_reset(app, tmp_path):
     packages = tmp_path / "packages"
     packages.mkdir()
     for index, name in enumerate(["old.apk", "new.apk", "old.hap", "new.hap"]):
         path = packages / name
         path.touch()
         os.utime(path, (100 + index, 100 + index))
-    app.config_manager.set_apk_need_t("old.apk", True)
     app.folder_var.set(str(packages))
     app.scan_latest_packages()
     assert app.package_summary_var.get() == "APK new.apk · HAP new.hap"
-    # Pending metadata defaults to the permissive -t flag so an unknown target
-    # can never snapshot a non-installable value.
-    assert app.apk_test_var.get() is True
 
     app.apk_combo.current(1)
     app.apk_combo.event_generate("<<ComboboxSelected>>")
@@ -97,16 +91,14 @@ def test_scan_dropdown_changes_empty_directory_and_test_flag(app, tmp_path):
     old_apk = packages / "old.apk"
     assert app.latest_apk == old_apk
     assert app.latest_hap == packages / "old.hap"
-    assert old_apk in app._package_metadata_pending
-    assert app.apk_test_var.get() is True
     assert app.package_summary_var.get() == "APK old.apk · HAP old.hap"
+    assert app._apk_allow_test(old_apk) is True
 
-    # Unsupported/failed metadata also stays installable by default.
+    # Unsupported/failed metadata stays installable without extra UI state.
     app._apply_package_labels({
         old_apk: PackageLabel(status="unavailable", source="aapt2"),
     })
-    assert old_apk not in app._package_metadata_pending
-    assert app.apk_test_var.get() is True
+    assert app._apk_allow_test(old_apk) is True
 
     empty = tmp_path / "empty"
     empty.mkdir()
@@ -116,15 +108,15 @@ def test_scan_dropdown_changes_empty_directory_and_test_flag(app, tmp_path):
     assert app.package_summary_var.get() == "未找到可安装包"
     assert str(app.apk_combo.cget("state")) == "disabled"
     assert str(app.hap_combo.cget("state")) == "disabled"
-    assert app.apk_test_var.get() is False
 
 
 def test_package_display_changes_do_not_mutate_install_click_snapshot(app, monkeypatch):
     devices = [DeviceInfo("a", "android", "device"), DeviceInfo("h", "harmony", "device")]
     app._apply_device_refresh(devices)
     app.device_tree.selection_set("a", "h")
-    app.latest_apk, app.latest_hap = Path("original.apk"), Path("original.hap")
-    app.apk_test_var.set(True)
+    original_apk, original_hap = Path("original.apk"), Path("original.hap")
+    app.latest_apk, app.latest_hap = original_apk, original_hap
+    app._package_labels = {original_apk: PackageLabel("Original", "resolved", test_only=True)}
     scheduled = []
 
     class DeferredThread:
@@ -146,10 +138,9 @@ def test_package_display_changes_do_not_mutate_install_click_snapshot(app, monke
     app.device_tree.selection_remove("a", "h")
     app.update()
     assert app.package_summary_var.get() == "APK next.apk · HAP next.hap"
-    assert app.apk_test_var.get() is True
 
     app._finalize_install(devices, *snapshot)
-    assert scheduled[1].args == (["a", "h"], Path("original.apk"), Path("original.hap"), True)
+    assert scheduled[1].args == (["a", "h"], original_apk, original_hap, True)
     assert_selection_labels(app, "已选 2 台：a，h")
     assert app.package_summary_var.get() == "APK next.apk · HAP next.hap"
 
