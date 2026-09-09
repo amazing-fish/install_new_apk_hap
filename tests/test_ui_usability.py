@@ -96,6 +96,8 @@ def test_default_window_shows_device_packages_and_log_without_page_scroll(app):
     assert not app.scroll_area.scrollbar.winfo_ismapped()
     assert not app.device_v_scrollbar.winfo_ismapped()
     assert not app.device_h_scrollbar.winfo_ismapped()
+    app.clear_log()
+    app.update()
     assert not app.log_v_scrollbar.winfo_ismapped()
     assert not app.log_h_scrollbar.winfo_ismapped()
     # Name/folder actions stay alongside their field in the ordinary window.
