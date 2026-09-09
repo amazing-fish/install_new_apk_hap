@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import main
 from services.device_detector import DeviceInfo
+from services.package_metadata import PackageLabel
 
 
 def assert_selection_labels(app, expected):
@@ -91,10 +92,21 @@ def test_scan_dropdown_changes_empty_directory_and_test_flag(app, tmp_path):
     app.hap_combo.current(1)
     app.hap_combo.event_generate("<<ComboboxSelected>>")
     app.update()
-    assert app.latest_apk == packages / "old.apk"
+    old_apk = packages / "old.apk"
+    assert app.latest_apk == old_apk
     assert app.latest_hap == packages / "old.hap"
-    assert app.apk_test_var.get() is True
+    # Filename memory must not be used while the selected APK is still pending.
+    assert old_apk in app._package_metadata_pending
+    assert app.apk_test_var.get() is False
     assert app.package_summary_var.get() == "APK old.apk · HAP old.hap"
+
+    # Once parsing actually completes without testOnly metadata, legacy memory is
+    # allowed as a compatibility fallback.
+    app._apply_package_labels({
+        old_apk: PackageLabel(status="unavailable", source="aapt2"),
+    })
+    assert old_apk not in app._package_metadata_pending
+    assert app.apk_test_var.get() is True
 
     empty = tmp_path / "empty"
     empty.mkdir()
