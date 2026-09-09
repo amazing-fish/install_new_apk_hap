@@ -396,17 +396,17 @@ class App(tk.Tk):
             self.apk_test_var.set(False)
             return
         if self.latest_apk in self._package_metadata_pending:
-            # Loading is not the same as a parser failure. Never apply legacy
-            # filename memory until the current APK has actually been inspected.
-            self.apk_test_var.set(False)
+            # Unknown must stay installable even if target selection is resolved
+            # only after preflight. -t is permissive for ordinary APKs.
+            self.apk_test_var.set(True)
             return
         label = self._package_labels.get(self.latest_apk)
         if label is not None and label.test_only is not None:
             self.apk_test_var.set(label.test_only)
             return
-        # Compatibility fallback only after this APK's metadata read completed.
-        apk_needs_t = self.config_manager.data.get("apk_needs_t", [])
-        self.apk_test_var.set(self.latest_apk.name in apk_needs_t)
+        # Missing/unsupported/failed metadata is an unknown state. Prefer the
+        # permissive install flag so test-only APKs still install by default.
+        self.apk_test_var.set(True)
 
     def scan_latest_packages(self) -> None:
         # Invalidate pending metadata even when the new directory is invalid.
