@@ -31,7 +31,10 @@ def test_initial_width_fits_four_device_columns(app):
                               DeviceInfo('Harmony-74BD-2026', 'harmony', 'device')])
     app.update()
     columns = sum(app.device_tree.column(c, 'width') for c in app.device_tree['columns'])
-    assert abs(app.device_tree.winfo_width() - columns) <= 4
+    released = app.device_tree.winfo_width() - columns
+    assert 0 <= released <= app.device_v_scrollbar.winfo_reqwidth() + 4
+    assert not app.device_v_scrollbar.winfo_ismapped()
+    assert not app.device_h_scrollbar.winfo_ismapped()
 
 
 def test_device_actions_use_available_width_before_wrapping(app):
