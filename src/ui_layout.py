@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 from ui_display import DEVICE_DISPLAY_COLUMNS
 from ui_styles import DEVICE_LIST_MIN_ROWS, PACKAGE_COMBO_VISIBLE_ROWS, SUMMARY_WRAP_LENGTH, configure_device_tree
-from ui_widgets import ActionRow, ScrollableArea
+from ui_widgets import ActionRow, AutoHideScrollbar, ScrollableArea
 
 if TYPE_CHECKING:
     from main import App
@@ -57,11 +57,14 @@ def _build_device_section(app, container):
     configure_device_tree(app.device_tree)
     app.device_tree.grid(row=0, column=0, sticky=tk.NSEW)
     app.device_tree.bind('<<TreeviewSelect>>', app.on_device_select)
-    vertical = ttk.Scrollbar(table, command=app.device_tree.yview)
-    vertical.grid(row=0, column=1, sticky=tk.NS)
-    horizontal = ttk.Scrollbar(table, orient=tk.HORIZONTAL, command=app.device_tree.xview)
-    horizontal.grid(row=1, column=0, sticky=tk.EW)
-    app.device_tree.configure(yscrollcommand=vertical.set, xscrollcommand=horizontal.set)
+    app.device_v_scrollbar = AutoHideScrollbar(table, command=app.device_tree.yview)
+    app.device_v_scrollbar.grid(row=0, column=1, sticky=tk.NS)
+    app.device_h_scrollbar = AutoHideScrollbar(table, orient=tk.HORIZONTAL, command=app.device_tree.xview)
+    app.device_h_scrollbar.grid(row=1, column=0, sticky=tk.EW)
+    app.device_tree.configure(
+        yscrollcommand=app.device_v_scrollbar.set,
+        xscrollcommand=app.device_h_scrollbar.set,
+    )
     actions = ActionRow(section)
     actions.pack(fill=tk.X, pady=(3, 0))
     app.refresh_button = actions.add('刷新设备', app.refresh_devices_and_packages)
@@ -89,10 +92,12 @@ def _build_package_section(app, container):
         setattr(app, attr, combo)
     options = ActionRow(section)
     options.pack(fill=tk.X, pady=(2, 0))
-    options.add_widget(ttk.Checkbutton(options, text='APK 需要 -t 安装', variable=app.apk_test_var))
+    options.add_widget(ttk.Checkbutton(
+        options, text='APK 需要 -t 安装（自动识别）', variable=app.apk_test_var,
+    ))
     options.add('保存此 APK 的 -t 设置', app.remember_apk_need_t)
-    summary = _add_summary_label(section, app.package_summary_var)
-    _show_clipped_summary(summary, [(app.apk_combo, app.apk_var), (app.hap_combo, app.hap_var)])
+    # The Combobox already contains app name, version and filename. Keep the
+    # package summary as internal state only instead of repeating it as a second row.
 
 
 def _build_log_section(app, container):
@@ -107,11 +112,15 @@ def _build_log_section(app, container):
     app.log_text = tk.Text(text_frame, height=6, width=1, wrap=tk.NONE, takefocus=True,
         relief=tk.SOLID, borderwidth=1, padx=6, pady=4, font='TkFixedFont')
     app.log_text.grid(row=0, column=0, sticky=tk.NSEW)
-    vertical = ttk.Scrollbar(text_frame, command=app.log_text.yview)
-    vertical.grid(row=0, column=1, sticky=tk.NS)
-    horizontal = ttk.Scrollbar(text_frame, orient=tk.HORIZONTAL, command=app.log_text.xview)
-    horizontal.grid(row=1, column=0, sticky=tk.EW)
-    app.log_text.configure(state=tk.DISABLED, yscrollcommand=vertical.set, xscrollcommand=horizontal.set)
+    app.log_v_scrollbar = AutoHideScrollbar(text_frame, command=app.log_text.yview)
+    app.log_v_scrollbar.grid(row=0, column=1, sticky=tk.NS)
+    app.log_h_scrollbar = AutoHideScrollbar(text_frame, orient=tk.HORIZONTAL, command=app.log_text.xview)
+    app.log_h_scrollbar.grid(row=1, column=0, sticky=tk.EW)
+    app.log_text.configure(
+        state=tk.DISABLED,
+        yscrollcommand=app.log_v_scrollbar.set,
+        xscrollcommand=app.log_h_scrollbar.set,
+    )
     app.log_text.bind('<Tab>', lambda event: _focus_next(event.widget))
     app.log_text.bind('<Shift-Tab>', lambda event: _focus_next(event.widget, reverse=True))
 

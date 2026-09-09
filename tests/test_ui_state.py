@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import main
 from services.device_detector import DeviceInfo
+from services.package_metadata import PackageLabel
 
 
 def assert_selection_labels(app, expected):
@@ -84,17 +85,28 @@ def test_scan_dropdown_changes_empty_directory_and_test_flag(app, tmp_path):
     app.folder_var.set(str(packages))
     app.scan_latest_packages()
     assert app.package_summary_var.get() == "APK new.apk · HAP new.hap"
-    assert app.apk_test_var.get() is False
+    # Pending metadata defaults to the permissive -t flag so an unknown target
+    # can never snapshot a non-installable value.
+    assert app.apk_test_var.get() is True
 
     app.apk_combo.current(1)
     app.apk_combo.event_generate("<<ComboboxSelected>>")
     app.hap_combo.current(1)
     app.hap_combo.event_generate("<<ComboboxSelected>>")
     app.update()
-    assert app.latest_apk == packages / "old.apk"
+    old_apk = packages / "old.apk"
+    assert app.latest_apk == old_apk
     assert app.latest_hap == packages / "old.hap"
+    assert old_apk in app._package_metadata_pending
     assert app.apk_test_var.get() is True
     assert app.package_summary_var.get() == "APK old.apk · HAP old.hap"
+
+    # Unsupported/failed metadata also stays installable by default.
+    app._apply_package_labels({
+        old_apk: PackageLabel(status="unavailable", source="aapt2"),
+    })
+    assert old_apk not in app._package_metadata_pending
+    assert app.apk_test_var.get() is True
 
     empty = tmp_path / "empty"
     empty.mkdir()
@@ -134,7 +146,7 @@ def test_package_display_changes_do_not_mutate_install_click_snapshot(app, monke
     app.device_tree.selection_remove("a", "h")
     app.update()
     assert app.package_summary_var.get() == "APK next.apk · HAP next.hap"
-    assert app.apk_test_var.get() is False
+    assert app.apk_test_var.get() is True
 
     app._finalize_install(devices, *snapshot)
     assert scheduled[1].args == (["a", "h"], Path("original.apk"), Path("original.hap"), True)

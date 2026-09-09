@@ -35,6 +35,7 @@ class PackageLabel:
     package_name: str | None = None
     version_name: str | None = None
     version_code: int | None = None
+    test_only: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -211,6 +212,7 @@ def _with_metadata(
     package_name: object = None,
     version_name: object = None,
     version_code: object = None,
+    test_only: bool | None = None,
 ) -> PackageLabel:
     return PackageLabel(
         label.name,
@@ -219,6 +221,7 @@ def _with_metadata(
         _metadata_text(package_name),
         _metadata_text(version_name),
         _version_code(version_code),
+        test_only,
     )
 
 
@@ -230,6 +233,17 @@ def _badging_package_fields(output: str) -> dict[str, str]:
         match.group(1): match.group(2)
         for match in re.finditer(r"([A-Za-z][A-Za-z0-9]*)='((?:\\.|[^'])*)'", lines[0])
     }
+
+
+def _badging_test_only(output: str) -> bool | None:
+    """AAPT2 prints testOnly only when the manifest flag is non-zero."""
+    lines = [line for line in output.splitlines() if line.startswith('testOnly=')]
+    if not lines:
+        return False
+    if len(lines) != 1:
+        return None
+    match = re.fullmatch(r"testOnly='(\d+)'", lines[0])
+    return bool(int(match.group(1))) if match else None
 
 
 def _hap_label(archive: zipfile.ZipFile, path: Path, tool: str | None) -> PackageLabel:
@@ -334,6 +348,7 @@ def read_package_label(path: Path, tools: MetadataTools) -> PackageLabel:
             package.get('name'),
             package.get('versionName'),
             package.get('versionCode'),
+            _badging_test_only(output),
         )
     except MetadataReadError:
         return PackageLabel(status='limited')

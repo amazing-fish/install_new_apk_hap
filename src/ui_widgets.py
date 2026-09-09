@@ -4,14 +4,28 @@ import tkinter as tk
 from tkinter import ttk
 
 
+class AutoHideScrollbar(ttk.Scrollbar):
+    """Grid-managed scrollbar that occupies no space when the full range is visible."""
+
+    def set(self, first, last):
+        first_value, last_value = float(first), float(last)
+        if first_value <= 0.0 and last_value >= 1.0:
+            self.grid_remove()
+        else:
+            self.grid()
+        super().set(first, last)
+
+
 class ScrollableArea(ttk.Frame):
     def __init__(self, parent):
         super().__init__(parent)
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(0, weight=1)
         self.canvas = tk.Canvas(self, highlightthickness=0, width=1, height=1)
-        self.scrollbar = ttk.Scrollbar(self, command=self.canvas.yview)
+        self.scrollbar = AutoHideScrollbar(self, command=self.canvas.yview)
+        self.canvas.grid(row=0, column=0, sticky=tk.NSEW)
+        self.scrollbar.grid(row=0, column=1, sticky=tk.NS)
         self.canvas.configure(yscrollcommand=self.scrollbar.set)
-        self.scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         self.content = ttk.Frame(self.canvas, padding=(12, 5))
         self._window = self.canvas.create_window(0, 0, window=self.content, anchor=tk.NW)
         self.content.bind('<Configure>', self._content_changed)
