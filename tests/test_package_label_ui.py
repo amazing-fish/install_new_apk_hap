@@ -2,6 +2,8 @@ import os
 import threading
 import time
 
+import pytest
+
 import main
 from services import package_label_loader as loader_module
 from services.package_label_loader import file_fingerprint
@@ -57,6 +59,25 @@ def test_background_label_update_preserves_choice_test_flag_and_logs(app, tmp_pa
         assert app.config_manager.data['apk_needs_t'] == ['old.apk']
     finally:
         release.set()
+
+
+@pytest.mark.parametrize('parsed,remembered,expected', [
+    (True, False, True),
+    (False, True, False),
+    (None, True, True),
+    (None, False, False),
+])
+def test_parsed_testonly_precedes_legacy_filename_memory(app, tmp_path, parsed, remembered, expected):
+    path = tmp_path/'demo.apk'; path.touch()
+    app.latest_apk = path
+    app._package_candidates = ([path], [])
+    app.apk_combo.configure(values=[path.name], state='readonly')
+    app.apk_var.set(path.name)
+    app.config_manager.set_apk_need_t(path.name, remembered)
+    app._apply_package_labels({
+        path: PackageLabel('Demo', 'resolved', test_only=parsed),
+    })
+    assert app.apk_test_var.get() is expected
 
 
 def test_stale_generation_empty_directory_and_changed_file_are_ignored(app, tmp_path):
