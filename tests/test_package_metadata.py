@@ -40,12 +40,13 @@ def test_sdk_compiled_resource_fixtures(monkeypatch, suffix, output, tools):
                         else [tools.aapt2, 'dump', 'badging', str(path.resolve())]]
 
 
-def test_apk_reads_package_and_version_from_same_badging_call(monkeypatch):
+def test_apk_reads_package_version_and_testonly_from_same_badging_call(monkeypatch):
     commands = []
     output = (
         "package: name='com.example.demo' versionCode='142' versionName='1.3.08.107' "
         "compileSdkVersion='35'\n"
         "application-label:'Demo App'\n"
+        "testOnly='1'\n"
     )
     def run(command):
         commands.append(command)
@@ -55,9 +56,18 @@ def test_apk_reads_package_and_version_from_same_badging_call(monkeypatch):
     result = read_package_label(path, MetadataTools(aapt2='aapt2'))
     assert result == PackageLabel(
         'Demo App', 'resolved', 'aapt2:application-label:default',
-        'com.example.demo', '1.3.08.107', 142,
+        'com.example.demo', '1.3.08.107', 142, True,
     )
     assert commands == [['aapt2', 'dump', 'badging', str(path.resolve())]]
+
+
+def test_apk_without_testonly_badging_is_not_a_test_package(monkeypatch):
+    monkeypatch.setattr(metadata, '_run_tool', lambda command: (
+        "package: name='com.example.release' versionCode='1' versionName='1.0'\n"
+        "application-label:'Release'\n"
+    ))
+    result = read_package_label(FIXTURES / 'compiled.apk', MetadataTools(aapt2='aapt2'))
+    assert result.test_only is False
 
 
 @pytest.mark.parametrize('member,document,expected', [
