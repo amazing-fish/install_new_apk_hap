@@ -379,6 +379,18 @@ class App(tk.Tk):
         else:
             self.log("未找到上次扫描目录")
 
+    def _update_apk_test_flag(self) -> None:
+        if not self.latest_apk:
+            self.apk_test_var.set(False)
+            return
+        label = self._package_labels.get(self.latest_apk)
+        if label is not None and label.test_only is not None:
+            self.apk_test_var.set(label.test_only)
+            return
+        # Compatibility fallback for packages whose metadata could not be read.
+        apk_needs_t = self.config_manager.data.get("apk_needs_t", [])
+        self.apk_test_var.set(self.latest_apk.name in apk_needs_t)
+
     def scan_latest_packages(self) -> None:
         # Invalidate pending metadata even when the new directory is invalid.
         self._package_label_loader.cancel()
@@ -419,8 +431,7 @@ class App(tk.Tk):
         )
         apk_name = self.latest_apk.name if self.latest_apk else "未找到"
         hap_name = self.latest_hap.name if self.latest_hap else "未找到"
-        apk_needs_t = self.config_manager.data.get("apk_needs_t", [])
-        self.apk_test_var.set(self.latest_apk is not None and self.latest_apk.name in apk_needs_t)
+        self._update_apk_test_flag()
         self._update_package_summary()
         selection = (self.latest_apk, self.latest_hap, self.apk_test_var.get())
         if snapshot != self._last_package_scan_snapshot or selection != previous_selection:
@@ -480,6 +491,7 @@ class App(tk.Tk):
                 if path == selected:
                     var.set(display)
                     break
+        self._update_apk_test_flag()
         self._update_package_summary()
 
     def _update_package_summary(self) -> None:
@@ -514,8 +526,7 @@ class App(tk.Tk):
     def on_apk_selected(self, _event: tk.Event) -> None:
         selected_name = self.apk_var.get()
         self.latest_apk = self.apk_name_map.get(selected_name)
-        apk_needs_t = self.config_manager.data.get("apk_needs_t", [])
-        self.apk_test_var.set(self.latest_apk is not None and self.latest_apk.name in apk_needs_t)
+        self._update_apk_test_flag()
         self._update_package_summary()
 
     def on_hap_selected(self, _event: tk.Event) -> None:
