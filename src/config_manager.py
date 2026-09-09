@@ -7,7 +7,6 @@ from typing import Any, Dict
 DEFAULT_CONFIG = {
     "device_names": {},
     "last_scan_dir": "",
-    "apk_needs_t": [],
 }
 
 
@@ -43,22 +42,3 @@ class ConfigManager:
     def set_last_scan_dir(self, path: str) -> None:
         self._config["last_scan_dir"] = path
         self.save()
-
-    def add_apk_need_t(self, apk_name: str) -> None:
-        self.set_apk_need_t(apk_name, True)
-
-    def set_apk_need_t(self, apk_name: str, needs_t: bool) -> bool:
-        self._config.setdefault("apk_needs_t", [])
-        apk_needs_t = self._config["apk_needs_t"]
-        changed = False
-        if needs_t and apk_name not in apk_needs_t:
-            apk_needs_t.append(apk_name)
-            changed = True
-        elif not needs_t and apk_name in apk_needs_t:
-            self._config["apk_needs_t"] = [
-                remembered_name for remembered_name in apk_needs_t if remembered_name != apk_name
-            ]
-            changed = True
-        if changed:
-            self.save()
-        return changed
