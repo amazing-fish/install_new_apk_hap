@@ -85,7 +85,9 @@ def test_scan_dropdown_changes_empty_directory_and_test_flag(app, tmp_path):
     app.folder_var.set(str(packages))
     app.scan_latest_packages()
     assert app.package_summary_var.get() == "APK new.apk · HAP new.hap"
-    assert app.apk_test_var.get() is False
+    # Pending metadata defaults to the permissive -t flag so an unknown target
+    # can never snapshot a non-installable value.
+    assert app.apk_test_var.get() is True
 
     app.apk_combo.current(1)
     app.apk_combo.event_generate("<<ComboboxSelected>>")
@@ -95,13 +97,11 @@ def test_scan_dropdown_changes_empty_directory_and_test_flag(app, tmp_path):
     old_apk = packages / "old.apk"
     assert app.latest_apk == old_apk
     assert app.latest_hap == packages / "old.hap"
-    # Filename memory must not be used while the selected APK is still pending.
     assert old_apk in app._package_metadata_pending
-    assert app.apk_test_var.get() is False
+    assert app.apk_test_var.get() is True
     assert app.package_summary_var.get() == "APK old.apk · HAP old.hap"
 
-    # Once parsing actually completes without testOnly metadata, legacy memory is
-    # allowed as a compatibility fallback.
+    # Unsupported/failed metadata also stays installable by default.
     app._apply_package_labels({
         old_apk: PackageLabel(status="unavailable", source="aapt2"),
     })
@@ -146,7 +146,7 @@ def test_package_display_changes_do_not_mutate_install_click_snapshot(app, monke
     app.device_tree.selection_remove("a", "h")
     app.update()
     assert app.package_summary_var.get() == "APK next.apk · HAP next.hap"
-    assert app.apk_test_var.get() is False
+    assert app.apk_test_var.get() is True
 
     app._finalize_install(devices, *snapshot)
     assert scheduled[1].args == (["a", "h"], Path("original.apk"), Path("original.hap"), True)
