@@ -47,10 +47,14 @@ def test_long_content_controls_reflow_and_keyboard_reveals_log(app, geometry):
     assert_visible(app, app.install_button)
     assert_visible(app, app.status_selection_label)
     canvas = app.scroll_area.canvas
-    if app.scroll_area.content.winfo_height() > canvas.winfo_height():
+    page_needs_scroll = app.scroll_area.content.winfo_height() > canvas.winfo_height()
+    if page_needs_scroll:
         assert canvas.yview()[1] < 1
     else:
         assert canvas.yview() == (0, 1)
+    assert bool(app.scroll_area.scrollbar.winfo_ismapped()) is page_needs_scroll
+    assert app.device_v_scrollbar.winfo_ismapped()
+    assert app.device_h_scrollbar.winfo_ismapped()
     for button in descendants(app.scroll_area.content):
         if isinstance(button, ttk.Button):
             assert button.winfo_width() >= button.winfo_reqwidth()
@@ -89,11 +93,16 @@ def test_default_window_shows_device_packages_and_log_without_page_scroll(app):
                     app.hap_combo, app.log_text, app.install_button):
         assert_visible(app, control)
     assert app.scroll_area.canvas.yview() == (0, 1)
+    assert not app.scroll_area.scrollbar.winfo_ismapped()
+    assert not app.device_v_scrollbar.winfo_ismapped()
+    assert not app.device_h_scrollbar.winfo_ismapped()
+    assert not app.log_v_scrollbar.winfo_ismapped()
+    assert not app.log_h_scrollbar.winfo_ismapped()
     # Name/folder actions stay alongside their field in the ordinary window.
     assert app.name_entry.actions.buttons[0].winfo_rooty() == app.name_entry.actions.buttons[1].winfo_rooty()
 
 
-def test_full_summaries_only_expand_when_primary_names_are_clipped(app):
+def test_package_display_has_no_redundant_summary_row(app):
     show(app, DEFAULT_GEOMETRY)
     app._apply_device_refresh([DeviceInfo('a', 'android', 'device')])
     app.apk_combo.configure(values=['short.apk'], state='readonly')
@@ -101,10 +110,10 @@ def test_full_summaries_only_expand_when_primary_names_are_clipped(app):
     app.latest_apk = Path('short.apk')
     app._update_package_summary()
     app.update()
-    package_summary, = [widget for widget in descendants(app.scroll_area.content)
+    package_summaries = [widget for widget in descendants(app.scroll_area.content)
         if isinstance(widget, ttk.Label) and str(widget.cget('textvariable')) == str(app.package_summary_var)]
+    assert package_summaries == []
     assert not app.execution_selection_label.winfo_ismapped()
-    assert not package_summary.winfo_ismapped()
     app.config_manager.data['device_names'] = {'a': '长设备名称' * 30}
     app._update_selected_device_summary()
     app.latest_apk = Path('long-name-' * 30 + '.apk')
@@ -112,7 +121,8 @@ def test_full_summaries_only_expand_when_primary_names_are_clipped(app):
     app._update_package_summary()
     app.update()
     assert app.execution_selection_label.winfo_ismapped()
-    assert package_summary.winfo_ismapped()
+    assert [widget for widget in descendants(app.scroll_area.content)
+        if isinstance(widget, ttk.Label) and str(widget.cget('textvariable')) == str(app.package_summary_var)] == []
     app.config_manager.data['device_names'] = {'a': 'A'}
     app._update_selected_device_summary()
     app.apk_var.set('short.apk')
@@ -120,7 +130,6 @@ def test_full_summaries_only_expand_when_primary_names_are_clipped(app):
     app._update_package_summary()
     app.update()
     assert not app.execution_selection_label.winfo_ismapped()
-    assert not package_summary.winfo_ismapped()
 
 
 def test_tab_visits_actions_and_nested_wheel_does_not_move_page(app):
@@ -143,6 +152,8 @@ def test_tab_visits_actions_and_nested_wheel_does_not_move_page(app):
         app.log(f'{index}: ' + 'long-output-' * 50)
     app.log_text.focus_force()
     app.update()
+    assert app.log_v_scrollbar.winfo_ismapped()
+    assert app.log_h_scrollbar.winfo_ismapped()
     page_before = app.scroll_area.canvas.yview()
     text_before = app.log_text.yview()
     app.log_text.event_generate('<MouseWheel>', delta=120)
