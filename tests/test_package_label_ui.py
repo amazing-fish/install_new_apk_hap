@@ -2,8 +2,6 @@ import os
 import threading
 import time
 
-import pytest
-
 import main
 from services import package_label_loader as loader_module
 from services.package_label_loader import file_fingerprint
@@ -18,7 +16,7 @@ def pump_until(app, predicate):
     assert predicate()
 
 
-def test_background_label_update_preserves_choice_test_flag_and_logs(app, tmp_path, monkeypatch):
+def test_background_label_update_preserves_choice_and_logs(app, tmp_path, monkeypatch):
     paths = [tmp_path/'old.apk', tmp_path/'new.apk']
     for index, path in enumerate(paths):
         path.touch(); os.utime(path, (100+index, 100+index))
@@ -43,41 +41,19 @@ def test_background_label_update_preserves_choice_test_flag_and_logs(app, tmp_pa
         app.after(0, lambda: events.append('responsive'))
         app.update()
         assert events == ['responsive']
-        app.config_manager.set_apk_need_t('old.apk', True)
         app.apk_combo.current(1)
         app.on_apk_selected(None)
         log_before = app.log_text.get('1.0', 'end')
         release.set()
         pump_until(app, lambda: '同名应用' in app.apk_var.get())
-        assert app.latest_apk == paths[0] and app.apk_test_var.get()
+        assert app.latest_apk == paths[0]
         assert app.apk_name_map[app.apk_var.get()] == paths[0]
         assert app.apk_var.get() == '同名应用 · 1.2.3 (123)（old.apk）'
         assert app.package_summary_var.get() == 'APK 同名应用 · 1.2.3 (123)（old.apk）'
         assert app.log_text.get('1.0', 'end') == log_before
         assert all(t != threading.get_ident() for t in worker_threads)
-        app.remember_apk_need_t()
-        assert app.config_manager.data['apk_needs_t'] == ['old.apk']
     finally:
         release.set()
-
-
-@pytest.mark.parametrize('parsed,remembered,expected', [
-    (True, False, True),
-    (False, True, False),
-    (None, True, True),
-    (None, False, True),
-])
-def test_parsed_testonly_precedes_memory_and_unknown_defaults_safe(app, tmp_path, parsed, remembered, expected):
-    path = tmp_path/'demo.apk'; path.touch()
-    app.latest_apk = path
-    app._package_candidates = ([path], [])
-    app.apk_combo.configure(values=[path.name], state='readonly')
-    app.apk_var.set(path.name)
-    app.config_manager.set_apk_need_t(path.name, remembered)
-    app._apply_package_labels({
-        path: PackageLabel('Demo', 'resolved', test_only=parsed),
-    })
-    assert app.apk_test_var.get() is expected
 
 
 def test_stale_generation_empty_directory_and_changed_file_are_ignored(app, tmp_path):
@@ -105,12 +81,12 @@ def test_stale_generation_empty_directory_and_changed_file_are_ignored(app, tmp_
     assert app.package_summary_var.get() == '未找到可安装包'
 
 
-def test_metadata_apply_keeps_frozen_install_parameters(app, monkeypatch, tmp_path):
+def test_metadata_apply_does_not_mutate_install_click_snapshot(app, monkeypatch, tmp_path):
     from services.device_detector import DeviceInfo
     path = tmp_path/'app.apk'; path.touch()
     devices = [DeviceInfo('a', 'android', 'device')]
     app._apply_device_refresh(devices); app.device_tree.selection_set('a')
-    app.latest_apk = path; app.apk_test_var.set(True)
+    app.latest_apk = path
     app._package_candidates = ([path], [])
     tasks = []
     class DeferredThread:
@@ -119,7 +95,11 @@ def test_metadata_apply_keeps_frozen_install_parameters(app, monkeypatch, tmp_pa
         def start(self):
             tasks.append(self.args)
     monkeypatch.setattr(main.threading, 'Thread', DeferredThread)
+    # No metadata at click time => safe permissive snapshot.
     app.install_to_selected()
-    app._apply_package_labels({path: PackageLabel('Renamed display', 'resolved')})
+    assert tasks[0] == ({'a'}, path, None, True)
+    # A later precise result may change future installs, not the in-flight one.
+    app._apply_package_labels({path: PackageLabel('Renamed display', 'resolved', test_only=False)})
     app._finalize_install(devices, *tasks[0])
     assert tasks[1] == (['a'], path, None, True)
+    assert app._apk_allow_test(path) is False
