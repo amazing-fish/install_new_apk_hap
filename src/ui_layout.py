@@ -90,14 +90,8 @@ def _build_package_section(app, container):
         combo = _field_row(section, platform, variable, combo=True)
         combo.bind('<<ComboboxSelected>>', callback)
         setattr(app, attr, combo)
-    options = ActionRow(section)
-    options.pack(fill=tk.X, pady=(2, 0))
-    options.add_widget(ttk.Checkbutton(
-        options, text='APK 需要 -t 安装（自动识别）', variable=app.apk_test_var,
-    ))
-    options.add('保存此 APK 的 -t 设置', app.remember_apk_need_t)
-    # The Combobox already contains app name, version and filename. Keep the
-    # package summary as internal state only instead of repeating it as a second row.
+    # The Combobox already contains app name, version and filename. Metadata is
+    # advisory only; installation has no manual per-APK option row.
 
 
 def _build_log_section(app, container):
