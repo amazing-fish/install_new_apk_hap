@@ -65,9 +65,9 @@ def test_background_label_update_preserves_choice_test_flag_and_logs(app, tmp_pa
     (True, False, True),
     (False, True, False),
     (None, True, True),
-    (None, False, False),
+    (None, False, True),
 ])
-def test_parsed_testonly_precedes_legacy_filename_memory(app, tmp_path, parsed, remembered, expected):
+def test_parsed_testonly_precedes_memory_and_unknown_defaults_safe(app, tmp_path, parsed, remembered, expected):
     path = tmp_path/'demo.apk'; path.touch()
     app.latest_apk = path
     app._package_candidates = ([path], [])
