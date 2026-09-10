@@ -33,6 +33,27 @@ class CollectResult:
     file_count: int = 0
 
 
+@dataclass(frozen=True)
+class HarmonyAppLogTarget:
+    display_name: str
+    remote_path: str
+    archive_prefix: str
+
+
+HARMONY_APP_LOG_TARGETS = {
+    "qiankun": HarmonyAppLogTarget(
+        display_name="乾崑日志",
+        remote_path="/data/app/el2/100/base/com.yinwang.qiankunapp.hm/haps/phone/files/qklog/",
+        archive_prefix="qiankun_logs",
+    ),
+    "demo": HarmonyAppLogTarget(
+        display_name="Demo日志",
+        remote_path="/data/app/el2/100/base/adsmobilesdk.all.huawei/haps/entry/files",
+        archive_prefix="demo_logs",
+    ),
+}
+
+
 def _command_error_result(command: List[str], error: Exception) -> subprocess.CompletedProcess:
     return subprocess.CompletedProcess(command, 1, "", f"命令执行失败: {command[0]} ({error})")
 
@@ -157,64 +178,65 @@ def run_harmony_recent_crash_zip(device_id: str, output_dir: Path, days: int = 7
     )
 
 
-def run_harmony_nextdemo_log_zip(device_id: str, output_dir: Path) -> CollectResult:
+def run_harmony_app_log_zip(device_id: str, output_dir: Path, target_key: str) -> CollectResult:
+    """Pull one known Harmony app log directory directly and archive it locally."""
+    try:
+        target = HARMONY_APP_LOG_TARGETS[target_key]
+    except KeyError as error:
+        raise ValueError(f"unknown Harmony app log target: {target_key}") from error
+
     hdc = resolve_hdc_executable()
     output_dir.mkdir(parents=True, exist_ok=True)
-    find_command = [
-        hdc,
-        "-t",
-        device_id,
-        "shell",
-        "find",
-        "/data/app",
-        "-type",
-        "d",
-        "-path",
-        "*/haps/entry/files/log-ads",
-    ]
-    find_result = _run_command(find_command)
-    if find_result.returncode != 0:
-        return CollectResult(command=find_command, process=find_result)
+    safe_device_id = _safe_filename_part(device_id)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    remote_dirs = [line.strip() for line in find_result.stdout.splitlines() if line.strip()]
-    if not remote_dirs:
-        return CollectResult(
-            command=find_command,
-            process=subprocess.CompletedProcess(find_command, 0, "", "未找到 haps/entry/files/log-ads 路径"),
-        )
-
-    pulled_files: List[Path] = []
-    with tempfile.TemporaryDirectory(prefix="nextdemo_") as temp_dir:
+    with tempfile.TemporaryDirectory(
+        prefix=f"{target.archive_prefix}_{safe_device_id}_",
+        dir=output_dir,
+    ) as temp_dir:
         temp_base = Path(temp_dir)
-        for index, remote_dir in enumerate(remote_dirs, start=1):
-            receive_target = temp_base / f"log_ads_{index}"
-            recv_command = [hdc, "-t", device_id, "file", "recv", remote_dir, str(receive_target)]
-            recv_result = _run_command(recv_command)
-            if recv_result.returncode != 0:
-                return CollectResult(command=recv_command, process=recv_result)
-            for file_path in receive_target.rglob("*"):
-                if file_path.is_file():
-                    pulled_files.append(file_path)
+        receive_target = temp_base / target_key
+        recv_command = [
+            hdc,
+            "-t",
+            device_id,
+            "file",
+            "recv",
+            target.remote_path,
+            str(receive_target),
+        ]
+        recv_result = _run_command(recv_command)
+        if recv_result.returncode != 0:
+            return CollectResult(command=recv_command, process=recv_result)
 
+        pulled_files = sorted(path for path in temp_base.rglob("*") if path.is_file())
         if not pulled_files:
             return CollectResult(
-                command=find_command,
-                process=subprocess.CompletedProcess(find_command, 0, "", "路径存在但未拉取到文件"),
+                command=recv_command,
+                process=subprocess.CompletedProcess(
+                    recv_command,
+                    0,
+                    recv_result.stdout,
+                    recv_result.stderr or f"{target.display_name}拉取成功但未发现文件",
+                ),
             )
 
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        zip_path = output_dir / f"nextdemo_logs_{_safe_filename_part(device_id)}_{timestamp}.zip"
+        zip_path = output_dir / f"{target.archive_prefix}_{safe_device_id}_{timestamp}.zip"
         with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zip_file:
             for file_path in pulled_files:
-                arcname = file_path.relative_to(temp_base)
-                zip_file.write(file_path, arcname.as_posix())
+                zip_file.write(file_path, file_path.relative_to(temp_base).as_posix())
 
     return CollectResult(
-        command=find_command,
-        process=find_result,
+        command=recv_command,
+        process=recv_result,
         zip_path=zip_path,
         file_count=len(pulled_files),
     )
+
+
+def run_harmony_nextdemo_log_zip(device_id: str, output_dir: Path) -> CollectResult:
+    """Compatibility wrapper for callers that still use the former NEXTdemo name."""
+    return run_harmony_app_log_zip(device_id, output_dir, "demo")
 
 
 def build_android_install_command(
