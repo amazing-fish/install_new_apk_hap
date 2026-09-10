@@ -17,13 +17,16 @@ BUTTON_ACTIONS = [
     ("扫描最新包", "refresh_devices_and_packages"),
     ("获取UDID", "fetch_hdc_udid"),
     ("获取崩溃日志", "fetch_crash_log"),
-    ("获取NEXTdemo日志", "fetch_nextdemo_log"),
     ("保存名称", "save_device_name"),
     ("复制设备码", "copy_selected_device_id"),
     ("选择目录", "choose_folder"),
     ("安装到所选设备", "install_to_selected"),
     ("复制日志", "copy_log"),
     ("清空日志", "clear_log"),
+]
+APP_LOG_ACTIONS = [
+    ("乾崑日志", "fetch_qiankun_log"),
+    ("Demo日志", "fetch_demo_log"),
 ]
 
 
@@ -46,7 +49,7 @@ def layout():
     }
     for name, value in values.items():
         setattr(host, name, tk.StringVar(master=host, value=value))
-    callbacks = {name for _, name in BUTTON_ACTIONS} | {
+    callbacks = {name for _, name in BUTTON_ACTIONS + APP_LOG_ACTIONS} | {
         "on_device_select", "on_apk_selected", "on_hap_selected"
     }
     for name in callbacks:
@@ -87,6 +90,20 @@ def test_buttons_call_the_supplied_action_once(layout, text, action):
     ]
     button.invoke()
     assert host.calls == [action]
+
+
+def test_app_log_menu_exposes_explicit_targets(layout):
+    host, _ = layout
+    assert isinstance(host.app_log_button, ttk.Menubutton)
+    assert host.app_log_button.cget("text") == "获取APP日志"
+    assert host.app_log_menu.index("end") == 1
+    assert [host.app_log_menu.entrycget(index, "label") for index in range(2)] == [
+        "乾崑日志", "Demo日志"
+    ]
+    for index, (_, action) in enumerate(APP_LOG_ACTIONS):
+        host.calls.clear()
+        host.app_log_menu.invoke(index)
+        assert host.calls == [action]
 
 
 def test_selection_events_and_editing_use_supplied_variables(layout):
