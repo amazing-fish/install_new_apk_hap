@@ -13,13 +13,14 @@ from typing import Dict, Iterable, List, Optional, Set, Tuple
 from config_manager import ConfigManager
 from services.device_detector import DeviceInfo, detect_devices, get_hdc_device_udid
 from services.installer import (
+    HARMONY_APP_LOG_TARGETS,
     InstallResult,
     build_android_install_command,
     build_harmony_install_command,
     install_android,
     install_harmony,
     run_android_dropbox_dump,
-    run_harmony_nextdemo_log_zip,
+    run_harmony_app_log_zip,
     run_harmony_recent_crash_zip,
 )
 from services.package_scanner import find_latest_packages
@@ -674,8 +675,13 @@ class App(tk.Tk):
     def _set_crash_log_fetch_state(self, fetching: bool, operation: str = "崩溃日志") -> None:
         self.crash_log_fetching = fetching
         self.log_operation = operation if fetching else ""
-        self.crash_log_button.config(text="获取崩溃日志中…" if fetching and operation == "崩溃日志" else "获取崩溃日志")
-        self.nextdemo_log_button.config(text="获取NEXTdemo日志中…" if fetching and operation == "NEXTdemo日志" else "获取NEXTdemo日志")
+        self.crash_log_button.config(
+            text="获取崩溃日志中…" if fetching and operation == "崩溃日志" else "获取崩溃日志"
+        )
+        app_log_operation = operation in {target.display_name for target in HARMONY_APP_LOG_TARGETS.values()}
+        self.app_log_button.config(
+            text=f"获取{operation}中…" if fetching and app_log_operation else "获取APP日志"
+        )
         self._update_device_actions()
 
     def _update_device_actions(self) -> None:
@@ -685,7 +691,7 @@ class App(tk.Tk):
         harmony = device is not None and device.platform == "harmony"
         supported = device is not None and device.platform in ("android", "harmony")
         self.udid_button.config(state=tk.NORMAL if harmony and not busy else tk.DISABLED)
-        self.nextdemo_log_button.config(state=tk.NORMAL if harmony and not busy else tk.DISABLED)
+        self.app_log_button.config(state=tk.NORMAL if harmony and not busy else tk.DISABLED)
         self.crash_log_button.config(state=tk.NORMAL if supported and not busy else tk.DISABLED)
 
     def _get_log_output_dir(self) -> Path:
@@ -822,45 +828,62 @@ class App(tk.Tk):
         messagebox.showinfo("提示", f"已打包最近 7 天崩溃日志：{zip_path}")
         self.log(f"获取崩溃日志成功：设备 {device_label}，共 {file_count} 个文件，ZIP: {zip_path}")
 
-    def fetch_nextdemo_log(self) -> None:
+    def fetch_qiankun_log(self) -> None:
+        self._fetch_harmony_app_log("qiankun")
+
+    def fetch_demo_log(self) -> None:
+        self._fetch_harmony_app_log("demo")
+
+    def _fetch_harmony_app_log(self, target_key: str) -> None:
+        target = HARMONY_APP_LOG_TARGETS[target_key]
         if self.crash_log_fetching:
-            self.log("获取NEXTdemo日志中：请稍候")
+            self.log(f"日志任务进行中：{self.log_operation or '日志'}，请稍候")
             return
         selection = self.device_tree.selection()
         if len(selection) != 1:
             messagebox.showwarning("提示", "请选择一个 Harmony 设备")
-            self.log("获取NEXTdemo日志失败：请选择一个 Harmony 设备")
+            self.log(f"获取{target.display_name}失败：请选择一个 Harmony 设备")
             return
         device_id = selection[0]
         device = next((d for d in self.devices if d.device_id == device_id), None)
         device_label = self._device_label(device_id)
         if not device:
             messagebox.showwarning("提示", "设备信息不存在，请先刷新设备")
-            self.log(f"获取NEXTdemo日志失败：设备 {device_label} 信息不存在")
+            self.log(f"获取{target.display_name}失败：设备 {device_label} 信息不存在")
             return
         if device.platform != "harmony":
             messagebox.showwarning("提示", "仅支持 Harmony 设备")
-            self.log(f"获取NEXTdemo日志失败：设备 {device_label} 非 Harmony")
+            self.log(f"获取{target.display_name}失败：设备 {device_label} 非 Harmony")
             return
         output_dir = self._get_log_output_dir()
-        self._set_crash_log_fetch_state(True, "NEXTdemo日志")
-        self.log(f"开始获取NEXTdemo日志: {device_label} -> {output_dir}")
+        self._set_crash_log_fetch_state(True, target.display_name)
+        self.log(
+            f"开始获取{target.display_name}: {device_label} · "
+            f"{target.remote_path} -> {output_dir}"
+        )
         threading.Thread(
-            target=self._fetch_nextdemo_log_worker,
-            args=(device_id, output_dir),
+            target=self._fetch_harmony_app_log_worker,
+            args=(device_id, output_dir, target_key),
             daemon=True,
         ).start()
 
-    def _fetch_nextdemo_log_worker(self, device_id: str, output_dir: Path) -> None:
+    def _fetch_harmony_app_log_worker(
+        self,
+        device_id: str,
+        output_dir: Path,
+        target_key: str,
+    ) -> None:
+        target = HARMONY_APP_LOG_TARGETS[target_key]
         try:
-            result = run_harmony_nextdemo_log_zip(device_id, output_dir)
+            result = run_harmony_app_log_zip(device_id, output_dir, target_key)
         except Exception as error:
-            self.after(0, self._apply_log_collection_error, "获取NEXTdemo日志", device_id, error)
+            self.after(0, self._apply_log_collection_error, f"获取{target.display_name}", device_id, error)
             return
         self.after(
             0,
-            self._apply_nextdemo_log_result,
+            self._apply_harmony_app_log_result,
             device_id,
+            target_key,
             result.command,
             result.process.returncode,
             result.process.stdout,
@@ -869,9 +892,10 @@ class App(tk.Tk):
             result.file_count,
         )
 
-    def _apply_nextdemo_log_result(
+    def _apply_harmony_app_log_result(
         self,
         device_id: str,
+        target_key: str,
         command: List[str],
         returncode: int,
         stdout: str,
@@ -879,19 +903,37 @@ class App(tk.Tk):
         zip_path: Optional[Path],
         file_count: int,
     ) -> None:
+        target = HARMONY_APP_LOG_TARGETS[target_key]
         self._set_crash_log_fetch_state(False)
         device_label = self._device_label(device_id)
-        self.log(f"NEXTdemo 日志命令: {' '.join(command)}")
+        self.log(f"{target.display_name}命令: {format_command_for_log(command)}")
+        diagnostics = "\n".join(part for part in (stdout.strip(), stderr.strip()) if part)
         if returncode != 0:
-            messagebox.showwarning("提示", f"获取NEXTdemo日志失败，设备 {device_label} 返回码: {returncode}")
-            self.log(f"获取NEXTdemo日志失败：设备 {device_label} 返回码 {returncode}\n{stderr}")
+            messagebox.showwarning(
+                "提示",
+                f"获取{target.display_name}失败，设备 {device_label} 返回码: {returncode}",
+            )
+            self.log(
+                f"获取{target.display_name}失败：设备 {device_label} 返回码 {returncode}"
+                + (f"\n{diagnostics}" if diagnostics else "")
+            )
             return
         if not zip_path:
-            messagebox.showwarning("提示", "未找到 haps/entry/files/log-ads 或无可拉取文件")
-            self.log(f"获取NEXTdemo日志完成但无输出：设备 {device_label}\n{stderr or stdout}")
+            messagebox.showwarning(
+                "提示",
+                f"{target.display_name}未拉取到文件，请检查应用是否安装及目标目录是否存在",
+            )
+            self.log(
+                f"获取{target.display_name}完成但无输出：设备 {device_label}；"
+                f"远端={target.remote_path}"
+                + (f"\n{diagnostics}" if diagnostics else "")
+            )
             return
-        messagebox.showinfo("提示", f"已打包NEXTdemo日志：{zip_path}")
-        self.log(f"获取NEXTdemo日志成功：设备 {device_label}，共 {file_count} 个文件，ZIP: {zip_path}")
+        messagebox.showinfo("提示", f"已打包{target.display_name}：{zip_path}")
+        self.log(
+            f"获取{target.display_name}成功：设备 {device_label}，"
+            f"共 {file_count} 个文件，ZIP: {zip_path}"
+        )
 
     def _install_worker(
         self,
