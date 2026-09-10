@@ -70,7 +70,12 @@ def _build_device_section(app, container):
     app.refresh_button = actions.add('刷新设备', app.refresh_devices_and_packages)
     app.udid_button = actions.add('获取UDID', app.fetch_hdc_udid)
     app.crash_log_button = actions.add('获取崩溃日志', app.fetch_crash_log)
-    app.nextdemo_log_button = actions.add('获取NEXTdemo日志', app.fetch_nextdemo_log)
+    app.app_log_button = ttk.Menubutton(actions, text='获取APP日志')
+    app.app_log_menu = tk.Menu(app.app_log_button, tearoff=False)
+    app.app_log_menu.add_command(label='乾崑日志', command=app.fetch_qiankun_log)
+    app.app_log_menu.add_command(label='Demo日志', command=app.fetch_demo_log)
+    app.app_log_button.configure(menu=app.app_log_menu)
+    actions.add_widget(app.app_log_button)
     app.name_entry = _field_row(section, '名称', app.name_var, actions=(
         ('保存名称', app.save_device_name), ('复制设备码', app.copy_selected_device_id)))
     app.execution_selection_label = _add_summary_label(section, app.selected_device_summary_var)
