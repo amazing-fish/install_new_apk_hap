@@ -170,11 +170,15 @@ def test_tab_visits_actions_and_nested_wheel_does_not_move_page(app):
     app.apk_combo.event_generate('<MouseWheel>', delta=-120)
     app.update()
     assert app.scroll_area.canvas.yview() == page_before
-    # Background wheel belongs to the outer page.
+    # Background wheel belongs to the outer page when an outer page exists.
     app.scroll_area.canvas.yview_moveto(0)
+    page_needs_scroll = app.scroll_area.content.winfo_height() > app.scroll_area.canvas.winfo_height()
     app.scroll_area.content.event_generate('<MouseWheel>', delta=-120)
     app.update()
-    assert app.scroll_area.canvas.yview()[0] > 0
+    if page_needs_scroll:
+        assert app.scroll_area.canvas.yview()[0] > 0
+    else:
+        assert app.scroll_area.canvas.yview() == (0, 1)
 
 
 def test_platform_actions_follow_selection_and_busy_completion(app):

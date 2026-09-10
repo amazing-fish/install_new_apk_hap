@@ -83,7 +83,6 @@ class App(tk.Tk):
         self.folder_var = tk.StringVar(master=self)
         self.apk_var = tk.StringVar(master=self, value="未找到")
         self.hap_var = tk.StringVar(master=self, value="未找到")
-        self.apk_test_var = tk.BooleanVar(master=self, value=False)
         self.install_status_var = tk.StringVar(master=self, value="就绪")
         self.device_summary_var = tk.StringVar(master=self, value=format_device_summary(self.devices))
         self.selected_device_summary_var = tk.StringVar(master=self, value="未选择设备")
@@ -101,7 +100,6 @@ class App(tk.Tk):
         self._package_label_folder = ""
         self._package_candidates = ([], [])
         self._package_labels = {}
-        self._package_metadata_pending: Set[Path] = set()
         self.bind('<Destroy>', self._close_package_labels, add='+')
 
         build_ui(self)
@@ -380,52 +378,27 @@ class App(tk.Tk):
         else:
             self.log("未找到上次扫描目录")
 
-    def _android_install_waits_for_apk_metadata(self, selection: Iterable[str]) -> bool:
-        if not self.latest_apk or self.latest_apk not in self._package_metadata_pending:
+    def _apk_allow_test(self, apk_path: Optional[Path]) -> bool:
+        """Metadata may optimize away -t, but can never be required to install."""
+        if not apk_path:
             return False
-        selected_ids = set(selection)
-        if selected_ids:
-            return any(
-                device.platform == "android" and device.device_id in selected_ids
-                for device in self.devices
-            )
-        return len(self.devices) == 1 and self.devices[0].platform == "android"
-
-    def _update_apk_test_flag(self) -> None:
-        if not self.latest_apk:
-            self.apk_test_var.set(False)
-            return
-        if self.latest_apk in self._package_metadata_pending:
-            # Unknown must stay installable even if target selection is resolved
-            # only after preflight. -t is permissive for ordinary APKs.
-            self.apk_test_var.set(True)
-            return
-        label = self._package_labels.get(self.latest_apk)
-        if label is not None and label.test_only is not None:
-            self.apk_test_var.set(label.test_only)
-            return
-        # Missing/unsupported/failed metadata is an unknown state. Prefer the
-        # permissive install flag so test-only APKs still install by default.
-        self.apk_test_var.set(True)
+        label = self._package_labels.get(apk_path)
+        return not (label is not None and label.test_only is False)
 
     def scan_latest_packages(self) -> None:
-        # Invalidate pending metadata even when the new directory is invalid.
         self._package_label_loader.cancel()
         self._package_label_request = 0
-        self._package_metadata_pending.clear()
         folder = self.folder_var.get().strip()
         if not folder:
             self._last_package_scan_snapshot = None
             messagebox.showwarning("提示", "请先选择目录")
             self.log("扫描失败：未选择目录")
-            self._update_device_actions()
             return
         directory = Path(folder)
         if not directory.is_dir():
             self._last_package_scan_snapshot = None
             messagebox.showwarning("提示", "目录不存在或不是目录")
             self.log(f"扫描失败：目录不存在或不是目录 {directory}")
-            self._update_device_actions()
             return
         try:
             package_info = find_latest_packages(directory)
@@ -438,11 +411,9 @@ class App(tk.Tk):
             self._last_package_scan_snapshot = None
             self.log(f"扫描安装包失败：{directory}，{error}")
             messagebox.showwarning("提示", f"扫描安装包失败：{error}")
-            self._update_device_actions()
             return
-        previous_selection = (self.latest_apk, self.latest_hap, self.apk_test_var.get())
+        previous_selection = (self.latest_apk, self.latest_hap)
         self._package_labels = {}
-        self._package_metadata_pending = set(package_info.apk_candidates)
         self.apk_name_map = {path.name: path for path in package_info.apk_candidates}
         self.hap_name_map = {path.name: path for path in package_info.hap_candidates}
         self.latest_apk = self._update_package_options(
@@ -453,9 +424,8 @@ class App(tk.Tk):
         )
         apk_name = self.latest_apk.name if self.latest_apk else "未找到"
         hap_name = self.latest_hap.name if self.latest_hap else "未找到"
-        self._update_apk_test_flag()
         self._update_package_summary()
-        selection = (self.latest_apk, self.latest_hap, self.apk_test_var.get())
+        selection = (self.latest_apk, self.latest_hap)
         if snapshot != self._last_package_scan_snapshot or selection != previous_selection:
             self.log(f"安装包扫描完成：{directory} · APK={apk_name}, HAP={hap_name}")
         self._last_package_scan_snapshot = snapshot
@@ -464,7 +434,6 @@ class App(tk.Tk):
         self._package_label_request = self._package_label_loader.submit(
             package_info.apk_candidates + package_info.hap_candidates
         )
-        self._update_device_actions()
         if self._package_label_poll is None:
             self._package_label_poll = self.after(50, self._poll_package_labels)
 
@@ -500,10 +469,6 @@ class App(tk.Tk):
 
     def _apply_package_labels(self, labels) -> None:
         self._package_labels = labels
-        # Only a current, fingerprint-validated result may release the gate.
-        # Missing results stay pending so a replaced/disappeared APK cannot use
-        # stale or filename-based -t state without a rescan.
-        self._package_metadata_pending.difference_update(labels)
         for paths, combo, var, selected, mapping_name in (
             (self._package_candidates[0], self.apk_combo, self.apk_var, self.latest_apk, 'apk_name_map'),
             (self._package_candidates[1], self.hap_combo, self.hap_var, self.latest_hap, 'hap_name_map'),
@@ -518,9 +483,7 @@ class App(tk.Tk):
                 if path == selected:
                     var.set(display)
                     break
-        self._update_apk_test_flag()
         self._update_package_summary()
-        self._update_device_actions()
 
     def _update_package_summary(self) -> None:
         apk_label = self._package_labels.get(self.latest_apk)
@@ -554,26 +517,12 @@ class App(tk.Tk):
     def on_apk_selected(self, _event: tk.Event) -> None:
         selected_name = self.apk_var.get()
         self.latest_apk = self.apk_name_map.get(selected_name)
-        self._update_apk_test_flag()
         self._update_package_summary()
-        self._update_device_actions()
 
     def on_hap_selected(self, _event: tk.Event) -> None:
         selected_name = self.hap_var.get()
         self.latest_hap = self.hap_name_map.get(selected_name)
         self._update_package_summary()
-
-    def remember_apk_need_t(self) -> None:
-        if not self.latest_apk:
-            messagebox.showwarning("提示", "未找到 APK")
-            self.log("保存 APK 的 -t 设置失败：未找到 APK")
-            return
-        needs_t = bool(self.apk_test_var.get())
-        self.config_manager.set_apk_need_t(self.latest_apk.name, needs_t)
-        if needs_t:
-            self.log(f"已记住 APK 需要 -t: {self.latest_apk.name}")
-        else:
-            self.log(f"已取消 APK 的 -t 记忆: {self.latest_apk.name}")
 
     def install_to_selected(self) -> None:
         if self.installing:
@@ -584,14 +533,9 @@ class App(tk.Tk):
             self.log("安装失败：未找到可安装的 APK/HAP")
             return
         previous_selection = set(self.device_tree.selection())
-        if self._android_install_waits_for_apk_metadata(previous_selection):
-            message = "APK 元数据尚未就绪，需先确认是否需要 -t；请等待解析完成或重新扫描"
-            self.log(f"安装等待：{message}")
-            messagebox.showwarning("提示", message)
-            return
         selected_apk = self.latest_apk
         selected_hap = self.latest_hap
-        allow_test = self.apk_test_var.get()
+        allow_test = self._apk_allow_test(selected_apk)
         selected_device_text = (
             self._device_labels_for_log(sorted(previous_selection))
             if previous_selection
@@ -743,12 +687,6 @@ class App(tk.Tk):
         self.udid_button.config(state=tk.NORMAL if harmony and not busy else tk.DISABLED)
         self.nextdemo_log_button.config(state=tk.NORMAL if harmony and not busy else tk.DISABLED)
         self.crash_log_button.config(state=tk.NORMAL if supported and not busy else tk.DISABLED)
-        if not self.installing:
-            waiting = self._android_install_waits_for_apk_metadata(selection)
-            self.install_button.config(
-                state=tk.DISABLED if waiting else tk.NORMAL,
-                text="等待 APK 解析…" if waiting else "安装到所选设备",
-            )
 
     def _get_log_output_dir(self) -> Path:
         if os.name == "nt":

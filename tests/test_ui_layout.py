@@ -21,7 +21,6 @@ BUTTON_ACTIONS = [
     ("保存名称", "save_device_name"),
     ("复制设备码", "copy_selected_device_id"),
     ("选择目录", "choose_folder"),
-    ("保存此 APK 的 -t 设置", "remember_apk_need_t"),
     ("安装到所选设备", "install_to_selected"),
     ("复制日志", "copy_log"),
     ("清空日志", "clear_log"),
@@ -47,13 +46,12 @@ def layout():
     }
     for name, value in values.items():
         setattr(host, name, tk.StringVar(master=host, value=value))
-    host.apk_test_var = tk.BooleanVar(master=host, value=True)
     callbacks = {name for _, name in BUTTON_ACTIONS} | {
         "on_device_select", "on_apk_selected", "on_hap_selected"
     }
     for name in callbacks:
         setattr(host, name, lambda *args, name=name: host.calls.append(name))
-    variables = {name: getattr(host, name) for name in [*values, "apk_test_var"]}
+    variables = {name: getattr(host, name) for name in values}
     try:
         build_ui(host)
         host.update()
@@ -77,7 +75,6 @@ def test_layout_preserves_supplied_variables_and_does_not_run_actions(layout):
     assert host.name_entry.get() == "测试机"
     assert host.apk_combo.get() == "preset.apk"
     assert host.hap_combo.get() == "preset.hap"
-    assert host.apk_test_var.get() is True
     assert str(host.log_text.cget("state")) == "disabled"
 
 
@@ -111,6 +108,11 @@ def test_selection_events_and_editing_use_supplied_variables(layout):
     host.name_entry.delete(0, tk.END)
     host.name_entry.insert(0, "新名称")
     assert host.name_var.get() == "新名称"
-    checkbutton, = [widget for widget in descendants(host) if isinstance(widget, ttk.Checkbutton)]
-    checkbutton.invoke()
-    assert host.apk_test_var.get() is False
+
+
+def test_package_section_has_no_manual_t_controls(layout):
+    host, _ = layout
+    texts = [str(widget.cget("text")) for widget in descendants(host)
+             if isinstance(widget, (ttk.Button, ttk.Checkbutton))]
+    assert not any("-t" in text for text in texts)
+    assert not any(isinstance(widget, ttk.Checkbutton) for widget in descendants(host))

@@ -16,22 +16,6 @@ class FakeButton:
         self.settings.update(kwargs)
 
 
-class FakeBooleanVar:
-    def __init__(self, value: bool) -> None:
-        self.value = value
-
-    def get(self) -> bool:
-        return self.value
-
-
-class FakePreferenceConfig:
-    def __init__(self) -> None:
-        self.calls = []
-
-    def set_apk_need_t(self, apk_name: str, needs_t: bool) -> None:
-        self.calls.append((apk_name, needs_t))
-
-
 def test_refresh_buttons_share_device_and_package_refresh() -> None:
     app = object.__new__(main.App)
     calls = []
@@ -92,31 +76,3 @@ def test_threadsafe_log_captures_timestamp_before_tk_callback(monkeypatch) -> No
     assert appended_entries == [
         ("20:35:09", "Harmony 开始执行命令"),
     ]
-
-
-def test_remember_apk_need_t_saves_checked_state() -> None:
-    app = object.__new__(main.App)
-    app.latest_apk = Path("demo.apk")
-    app.apk_test_var = FakeBooleanVar(True)
-    app.config_manager = FakePreferenceConfig()
-    logged_messages = []
-    app.log = logged_messages.append
-
-    main.App.remember_apk_need_t(app)
-
-    assert app.config_manager.calls == [("demo.apk", True)]
-    assert logged_messages == ["已记住 APK 需要 -t: demo.apk"]
-
-
-def test_remember_apk_need_t_removes_unchecked_state() -> None:
-    app = object.__new__(main.App)
-    app.latest_apk = Path("demo.apk")
-    app.apk_test_var = FakeBooleanVar(False)
-    app.config_manager = FakePreferenceConfig()
-    logged_messages = []
-    app.log = logged_messages.append
-
-    main.App.remember_apk_need_t(app)
-
-    assert app.config_manager.calls == [("demo.apk", False)]
-    assert logged_messages == ["已取消 APK 的 -t 记忆: demo.apk"]
