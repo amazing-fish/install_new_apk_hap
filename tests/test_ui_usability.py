@@ -188,16 +188,18 @@ def test_platform_actions_follow_selection_and_busy_completion(app):
     app.device_tree.selection_set('a')
     app.update()
     assert app.crash_log_button.instate(['!disabled'])
-    assert app.udid_button.instate(['disabled']) and app.nextdemo_log_button.instate(['disabled'])
+    assert app.udid_button.instate(['disabled']) and app.app_log_button.instate(['disabled'])
     app.device_tree.selection_set('h')
     app.update()
     assert app.udid_button.instate(['!disabled'])
-    app._set_crash_log_fetch_state(True, 'NEXTdemo日志')
-    assert all(button.instate(['disabled']) for button in (app.udid_button, app.crash_log_button, app.nextdemo_log_button))
-    assert app.nextdemo_log_button.cget('text') == '获取NEXTdemo日志中…'
+    assert app.app_log_button.instate(['!disabled'])
+    app._set_crash_log_fetch_state(True, '乾崑日志')
+    assert all(button.instate(['disabled']) for button in (app.udid_button, app.crash_log_button, app.app_log_button))
+    assert app.app_log_button.cget('text') == '获取乾崑日志中…'
     app.device_tree.selection_set('a')
     app.update()
     app._set_crash_log_fetch_state(False)
+    assert app.app_log_button.cget('text') == '获取APP日志'
     assert app.udid_button.instate(['disabled'])
     assert app.crash_log_button.instate(['!disabled'])
     app._set_refresh_state(True)

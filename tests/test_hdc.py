@@ -1,6 +1,7 @@
 import os
 import subprocess
 import threading
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -122,13 +123,10 @@ def test_all_operations_use_same_executable_without_path(isolated_hdc, monkeypat
             output = 'Harmony-01'
         elif command[-1] == '--udid':
             output = 'udid-value'
-        elif 'find' in command:
-            output = '/data/app/test/haps/entry/files/log-ads'
-            # The recv phase must keep the same resolved path.
-            monkeypatch.setenv('HDC_EXECUTABLE', str(tmp_path / 'now-invalid.exe'))
         elif 'recv' in command:
             target = Path(command[-1])
-            target = target / 'faultlogger' if command[-2].endswith('faultlogger') else target
+            if command[-2].rstrip('/').endswith('faultlogger'):
+                target = target / 'faultlogger'
             target.mkdir(parents=True, exist_ok=True)
             (target / 'current_crash.log').write_text('log', encoding='utf-8')
             output = ''
@@ -151,19 +149,100 @@ def test_all_operations_use_same_executable_without_path(isolated_hdc, monkeypat
     assert device_detector.get_hdc_device_udid('Harmony-01') == 'udid-value'
     assert installer.install_harmony('Harmony-01', tmp_path / 'app with spaces.hap').process.returncode == 0
     assert installer.run_harmony_recent_crash_zip('Harmony-01', tmp_path / 'crash').file_count == 1
-    assert installer.run_harmony_nextdemo_log_zip('Harmony-01', tmp_path / 'next').file_count == 1
+    assert installer.run_harmony_app_log_zip('Harmony-01', tmp_path / 'qk', 'qiankun').file_count == 1
+    assert installer.run_harmony_app_log_zip('Harmony-01', tmp_path / 'demo', 'demo').file_count == 1
     assert len(seen) == 6
 
 
-def test_nextdemo_receive_failure_retains_return_code(monkeypatch, tmp_path, hdc_executable):
-    monkeypatch.setattr(installer.tempfile, 'tempdir', str(tmp_path))
+@pytest.mark.parametrize('target_key,expected_remote,expected_prefix', [
+    (
+        'qiankun',
+        '/data/app/el2/100/base/com.yinwang.qiankunapp.hm/haps/phone/files/qklog/',
+        'qiankun_logs_',
+    ),
+    (
+        'demo',
+        '/data/app/el2/100/base/adsmobilesdk.all.huawei/haps/entry/files',
+        'demo_logs_',
+    ),
+])
+def test_app_logs_use_one_fixed_recv_without_find(
+    monkeypatch, tmp_path, hdc_executable, target_key, expected_remote, expected_prefix,
+):
+    commands = []
+
     def run(command, **kwargs):
-        return subprocess.CompletedProcess(command, 0, '/remote/log-ads', '') if 'find' in command else subprocess.CompletedProcess(command, 23, 'partial output', 'transfer failed')
+        commands.append(command)
+        assert 'find' not in command
+        target = Path(command[-1])
+        target.mkdir(parents=True, exist_ok=True)
+        (target / 'app.log').write_text('payload', encoding='utf-8')
+        return subprocess.CompletedProcess(command, 0, 'recv ok', '')
+
     monkeypatch.setattr(subprocess, 'run', run)
-    result = installer.run_harmony_nextdemo_log_zip('harmony', tmp_path)
+    result = installer.run_harmony_app_log_zip('Harmony-01', tmp_path, target_key)
+
+    assert len(commands) == 1
+    assert commands[0] == [
+        hdc_executable,
+        '-t',
+        'Harmony-01',
+        'file',
+        'recv',
+        expected_remote,
+        commands[0][-1],
+    ]
+    assert result.command == commands[0]
+    assert result.file_count == 1
+    assert result.zip_path is not None
+    assert result.zip_path.name.startswith(expected_prefix)
+    with zipfile.ZipFile(result.zip_path) as archive:
+        assert archive.namelist() == [f'{target_key}/app.log']
+
+
+@pytest.mark.parametrize('target_key', ['qiankun', 'demo'])
+def test_app_log_receive_failure_retains_return_code(monkeypatch, tmp_path, hdc_executable, target_key):
+    def run(command, **kwargs):
+        return subprocess.CompletedProcess(command, 23, 'partial output', 'transfer failed')
+    monkeypatch.setattr(subprocess, 'run', run)
+    result = installer.run_harmony_app_log_zip('harmony', tmp_path, target_key)
     assert result.process.returncode == 23
+    assert result.process.stdout == 'partial output'
     assert result.process.stderr == 'transfer failed'
     assert result.zip_path is None
+
+
+def test_app_log_empty_success_is_reported_as_empty(monkeypatch, tmp_path, hdc_executable):
+    monkeypatch.setattr(
+        subprocess,
+        'run',
+        lambda command, **kwargs: subprocess.CompletedProcess(command, 0, 'recv ok', ''),
+    )
+    result = installer.run_harmony_app_log_zip('harmony', tmp_path, 'qiankun')
+    assert result.process.returncode == 0
+    assert '未发现文件' in result.process.stderr
+    assert result.file_count == 0
+    assert result.zip_path is None
+
+
+def test_legacy_nextdemo_wrapper_uses_demo_fixed_target(monkeypatch, tmp_path, hdc_executable):
+    commands = []
+    def run(command, **kwargs):
+        commands.append(command)
+        target = Path(command[-1])
+        target.mkdir(parents=True, exist_ok=True)
+        (target / 'demo.log').write_text('log', encoding='utf-8')
+        return subprocess.CompletedProcess(command, 0, '', '')
+    monkeypatch.setattr(subprocess, 'run', run)
+    result = installer.run_harmony_nextdemo_log_zip('harmony', tmp_path)
+    assert result.file_count == 1
+    assert commands[0][-2] == installer.HARMONY_APP_LOG_TARGETS['demo'].remote_path
+    assert 'find' not in commands[0]
+
+
+def test_unknown_app_log_target_is_rejected(tmp_path):
+    with pytest.raises(ValueError, match='unknown Harmony app log target'):
+        installer.run_harmony_app_log_zip('harmony', tmp_path, 'unknown')
 
 
 def test_harmony_install_keeps_resolved_path_and_can_stop(monkeypatch, hdc_executable):

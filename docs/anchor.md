@@ -9,7 +9,7 @@
 3. 安装包扫描按文件修改时间排序，APK/HAP 各自默认选择最新候选。
 4. 包元数据由单个后台 worker 异步读取；结果必须匹配当前请求、目录和文件指纹才回写 UI。
 5. 点击安装后冻结设备选择与 APK/HAP 路径，再执行一次设备 preflight；仍在线的原选择被恢复，未选择且只剩一台设备时自动选择该设备。
-6. 安装在线程中执行，日志、状态和提示通过 Tk 主线程更新。
+6. 安装和日志采集均在线程中执行，状态、日志和提示通过 Tk 主线程更新。
 
 ## APK/HAP 元数据
 
@@ -25,6 +25,7 @@
 - 使用原生 Tkinter/ttk，不引入额外 GUI 框架。
 - 设备列表默认至少 3 行，最多 8 行；超过可见范围后滚动访问。
 - 页面、设备表和日志的滚动条仅在内容真实溢出时显示，不需要滚动时不占布局空间。
+- 设备操作区以一个“获取APP日志”菜单承载乾崑/Demo 两种 Harmony 应用日志，不为每个固定路径堆独立常驻按钮。
 - 安装包区域只保留目录、APK 下拉框、HAP 下拉框；下拉文本可包含应用名、版本和真实文件名，不重复显示第二排摘要。
 - 底部安装/中止按钮固定可达；长内容通过页面滚动、控件自身滚动或操作行换行处理。
 - 设备表行身份始终是 `device_id`；自定义名称只影响显示，不替代设备身份。
@@ -38,12 +39,23 @@
 - 用户主动中止显示“已中止”；命令失败显示“安装失败”；目标被跳过显示“安装未完成”；运行异常显示“安装异常”。
 - Windows 下外部命令使用无控制台模式，避免弹窗闪现。
 
+## Harmony APP 日志
+
+- APP 日志只支持当前单选的 Harmony 设备；Android、多选和无选择均不执行 HDC 拉取。
+- 不在 `/data/app` 下执行全局 `find`，固定应用直接 `file recv`，避免额外遍历、同名目录歧义和搜索失败。
+- 乾崑：`/data/app/el2/100/base/com.yinwang.qiankunapp.hm/haps/phone/files/qklog/`。
+- Demo：`/data/app/el2/100/base/adsmobilesdk.all.huawei/haps/entry/files`。
+- 实际命令为 `hdc -t <device_id> file recv <remote_path> <temporary_local_path>`。
+- 拉取成功后将临时目录打包为 ZIP；Windows 输出到 `D:\`，文件名前缀分别为 `qiankun_logs_`、`demo_logs_`。
+- `recv` 非零返回码必须保留完整命令、stdout/stderr 与返回码；命令成功但本地没有任何文件时明确报告空结果，不生成空 ZIP。
+- 两种应用日志共享同一个拉取/打包实现；旧 `run_harmony_nextdemo_log_zip()` 仅作为内部兼容入口映射到 Demo 固定路径，不再执行搜索。
+
 ## 设备与工具
 
 - Android 探测：`adb devices -l`，过滤 `emulator-*`。
 - Harmony 探测：`hdc list targets`。
 - HDC 路径统一由 `services/hdc.py` 解析，优先级为显式环境配置、DevEco SDK、PATH 和 Windows 常见安装位置；显式配置无效时直接报错，不静默换用其他工具。
-- UDID、Harmony 安装、崩溃日志和 NEXTdemo 日志均复用同一套 HDC 路径规则。
+- UDID、Harmony 安装、崩溃日志以及乾崑/Demo APP 日志均复用同一套 HDC 路径规则。
 
 ## 配置
 
@@ -65,7 +77,7 @@ Windows 配置文件：`%APPDATA%/install_new_apk_hap/app_config.json`。
 - `src/ui_display.py`：无 Tk 依赖的显示格式化。
 - `src/config_manager.py`：最小配置持久化。
 - `src/services/device_detector.py`：ADB/HDC 设备探测。
-- `src/services/installer.py`：安装命令构造、执行与中止。
+- `src/services/installer.py`：安装命令以及设备日志拉取/打包的命令执行。
 - `src/services/package_scanner.py`：候选包扫描和 mtime 排序。
 - `src/services/package_metadata.py`：APK/HAP 元数据读取。
 - `src/services/package_label_loader.py`：异步元数据 worker、缓存和文件指纹校验。
@@ -74,5 +86,5 @@ Windows 配置文件：`%APPDATA%/install_new_apk_hap/app_config.json`。
 ## 测试与发布
 
 - PR 和 `main` push 在 Windows/Python 3.11 上运行完整 pytest。
-- Tk 布局、状态切换、元数据异步更新、安装参数快照和失败语义均有自动化覆盖。
+- Tk 布局、状态切换、元数据异步更新、安装参数快照、APP 日志固定路径与失败语义均有自动化覆盖。
 - exe 构建流程在打包前校验内置工具和 NOTICE，并在隔离环境中验证产物；正式 Release/tag 与普通 PR 分开处理。
