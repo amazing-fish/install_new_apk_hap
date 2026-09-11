@@ -82,7 +82,7 @@ AAPT2_EXECUTABLE
 RESTOOL_EXECUTABLE
 ```
 
-显式路径无效时会直接报错，不静默换用其他工具版本。
+设置显式覆盖后只尝试该路径；如果路径不存在或不可执行，对应解析工具会被视为不可用，不会静默回退到内置工具、PATH 或 SDK 中的其他版本。元数据解析不可用不会阻止按真实文件路径选择和安装。
 
 更完整的解析边界、读取限制和模块职责见 [`docs/anchor.md`](docs/anchor.md)。内置工具来源与 NOTICE 见 [`vendor/metadata-tools/README.md`](vendor/metadata-tools/README.md)。
 
