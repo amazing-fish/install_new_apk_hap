@@ -94,6 +94,9 @@ def _build_package_section(app, container):
     ):
         combo = _field_row(section, platform, variable, combo=True)
         combo.bind('<<ComboboxSelected>>', callback)
+        # Block accidental wheel selection on the closed field, not its popup.
+        for sequence in ('<MouseWheel>', '<Button-4>', '<Button-5>'):
+            combo.bind(sequence, lambda _event: 'break')
         setattr(app, attr, combo)
     # The Combobox already contains app name, version and filename. Metadata is
     # advisory only; installation has no manual per-APK option row.
@@ -101,6 +104,7 @@ def _build_package_section(app, container):
 
 def _build_log_section(app, container):
     section, heading = _section(container, '日志')
+    section.pack_configure(fill=tk.BOTH, expand=True)
     actions = ActionRow(heading)
     actions.pack(side=tk.RIGHT, fill=tk.X, expand=True)
     actions.add('复制日志', app.copy_log)
@@ -108,6 +112,7 @@ def _build_log_section(app, container):
     text_frame = ttk.Frame(section)
     text_frame.pack(fill=tk.BOTH, expand=True)
     text_frame.columnconfigure(0, weight=1)
+    text_frame.rowconfigure(0, weight=1)
     app.log_text = tk.Text(text_frame, height=6, width=1, wrap=tk.NONE, takefocus=True,
         relief=tk.SOLID, borderwidth=1, padx=6, pady=4, font='TkFixedFont')
     app.log_text.grid(row=0, column=0, sticky=tk.NSEW)
