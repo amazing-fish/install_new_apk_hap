@@ -1024,10 +1024,12 @@ class App(tk.Tk):
             f"{platform} {device_label} 安装结果: {result.process.returncode}，"
             f"耗时 {result.duration_seconds:.2f} 秒"
         )
-        for line in result.process.stdout.splitlines():
+        for line in (result.process.stdout or "").splitlines():
             self._log_threadsafe(f"{platform} {device_label} 输出: {line}")
-        for line in result.process.stderr.splitlines():
-            self._log_threadsafe(f"{platform} {device_label} 错误输出: {line}")
+        # stderr is an output channel, not proof that the install failed.
+        stderr_label = "输出 [stderr]" if result.process.returncode == 0 else "错误输出 [stderr]"
+        for line in (result.process.stderr or "").splitlines():
+            self._log_threadsafe(f"{platform} {device_label} {stderr_label}: {line}")
 
     def request_stop_install(self) -> None:
         if not self.installing:
