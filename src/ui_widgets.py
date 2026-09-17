@@ -26,9 +26,17 @@ class ScrollableArea(ttk.Frame):
         self.canvas.grid(row=0, column=0, sticky=tk.NSEW)
         self.scrollbar.grid(row=0, column=1, sticky=tk.NS)
         self.canvas.configure(yscrollcommand=self.scrollbar.set)
-        self.content = ttk.Frame(self.canvas, padding=(12, 5))
-        self._window = self.canvas.create_window(0, 0, window=self.content, anchor=tk.NW)
-        self.content.bind('<Configure>', self._content_changed)
+        # A grid minimum fills a tall viewport without freezing the content's
+        # requested height: later device/summary changes still propagate.
+        self._body = ttk.Frame(self.canvas)
+        self._body.columnconfigure(0, weight=1)
+        self._body.rowconfigure(0, weight=1)
+        self.content = ttk.Frame(self._body, padding=(12, 5))
+        self.content.grid(row=0, column=0, sticky=tk.NSEW)
+        self._window = self.canvas.create_window(0, 0, window=self._body, anchor=tk.NW)
+        self._body.bind('<Configure>', self._content_changed)
+        # A shortened off-screen item may be unmapped before it is resized.
+        self._body.bind('<Unmap>', self._content_changed)
         self.canvas.bind('<Configure>', self._viewport_changed)
         self._root_window = self.winfo_toplevel()
         self._bindings = []
@@ -43,10 +51,19 @@ class ScrollableArea(ttk.Frame):
             self._bindings.append((sequence, self._root_window.bind(sequence, callback, add='+')))
 
     def _content_changed(self, _event):
-        self.canvas.configure(scrollregion=self.canvas.bbox(self._window))
+        bounds = self.canvas.bbox(self._window)
+        if bounds is None:
+            return
+        x1, y1, x2, y2 = bounds
+        viewport_height = self.canvas.winfo_height()
+        self.canvas.configure(scrollregion=(x1, y1, x2, max(y2, viewport_height)))
+        if y2 <= viewport_height:
+            self.canvas.yview_moveto(0)
 
     def _viewport_changed(self, event):
         self.canvas.itemconfigure(self._window, width=event.width)
+        self._body.rowconfigure(0, minsize=event.height)
+        self._content_changed(event)
 
     def _contains(self, widget):
         while isinstance(widget, tk.Misc):
@@ -61,6 +78,9 @@ class ScrollableArea(ttk.Frame):
         # Let nested controls keep their native wheel/selection behavior.
         if event.widget.winfo_class() in ('Text', 'Treeview', 'TCombobox', 'TScrollbar'):
             return
+        if self.content.winfo_height() <= self.canvas.winfo_height():
+            self.canvas.yview_moveto(0)
+            return 'break'
         delta = getattr(event, 'delta', 0)
         direction = -1 if getattr(event, 'num', None) == 4 or delta > 0 else 1
         self.canvas.yview_scroll(direction * max(1, abs(int(delta / 120))) * 3, 'units')
