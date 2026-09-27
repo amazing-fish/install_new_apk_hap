@@ -75,7 +75,13 @@ def verify_exe(executable: Path, work: Path) -> dict:
     for name in ('AAPT2-NOTICE.txt', 'RESTOOL-NOTICE.txt'):
         assert hashlib.sha256((notices / name).read_bytes()).hexdigest() == manifest['files'][name]
     assert json.loads((notices / 'manifest.json').read_text()) == manifest
-    report.update(standalone_exe=True, sdk_environment_removed=True, notices_verified=True)
+    # The GUI falls back to the native theme silently; the EXE must bundle sv-ttk.
+    theme_output = work / 'theme.json'
+    assert run_exe([str(exe), '--theme-report', str(theme_output)], app_dir, environment) == 0
+    theme = json.loads(theme_output.read_text(encoding='utf8'))
+    assert theme == {'themed': True, 'theme': 'sun-valley-light'}, theme
+    report.update(standalone_exe=True, sdk_environment_removed=True, notices_verified=True,
+                  theme=theme)
     return report
 
 

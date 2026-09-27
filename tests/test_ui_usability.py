@@ -82,7 +82,8 @@ def test_long_content_controls_reflow_and_keyboard_reveals_log(app, geometry):
 
 @pytest.mark.parametrize('app', [1.0, 1.5, 1.67], indirect=True)
 def test_default_window_shows_device_packages_and_log_without_page_scroll(app):
-    show(app, DEFAULT_GEOMETRY)
+    # The startup size scales with the display, so use what the app opened with.
+    show(app, app.geometry().split('+')[0])
     app._apply_device_refresh([DeviceInfo('android-a', 'android', 'device'),
                               DeviceInfo('harmony-b', 'harmony', 'device')])
     app.device_tree.selection_set('android-a')

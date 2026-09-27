@@ -22,7 +22,9 @@
 
 ## UI 约束
 
-- 使用原生 Tkinter/ttk，不引入额外 GUI 框架。
+- 使用 Tkinter/ttk，不引入额外 GUI 框架；外观只通过 ttk 主题 sv-ttk（`requirements.txt` 固定版本）提供，加载失败必须回退原生主题而不影响启动。exe 构建须打包 sv-ttk 数据文件，并由 `verify_exe.py` 检查主题生效。
+- sv-ttk 的 `<<ThemeChanged>>` 调色板处理会覆盖控件颜色：`ui_styles.apply_theme` 在创建控件前同步执行一次并解除该绑定，运行期不切换主题。
+- Windows 进程为系统 DPI 感知（`enable_high_dpi`），窗口初始尺寸与主题像素字号按 `ui_scale` 放大。
 - 设备列表默认至少 3 行，最多 8 行；超过可见范围后滚动访问。
 - 页面、设备表和日志的滚动条仅在内容真实溢出时显示，不需要滚动时不占布局空间。
 - 设备操作区以一个“获取APP日志”菜单承载乾崑/Demo 两种 Harmony 应用日志，不为每个固定路径堆独立常驻按钮。
