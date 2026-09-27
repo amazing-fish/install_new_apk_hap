@@ -54,6 +54,21 @@ def test_cancel_stops_a_running_command():
     assert process.describe_interruption(result) == "命令已中止"
 
 
+def test_cancelled_command_never_reports_success_even_if_child_exits_zero():
+    # On POSIX the child traps SIGTERM and exits 0; on Windows terminate() yields 1.
+    child = (
+        "import signal, sys, time\n"
+        "signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))\n"
+        "print('ready', flush=True)\n"
+        "time.sleep(30)\n"
+    )
+    cancel = threading.Event()
+    threading.Timer(0.5, cancel.set).start()
+    result = process.run(python(child), cancel=cancel, timeout=20)
+    assert result.cancelled
+    assert result.returncode != 0
+
+
 def test_output_limit_stops_the_command():
     result = process.run(python("import sys\nwhile True: sys.stdout.write('x' * 65536)"), output_limit=100_000, timeout=30)
     assert result.output_exceeded and result.returncode != 0

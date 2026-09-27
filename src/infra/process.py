@@ -148,8 +148,10 @@ def run(
         stdout_bytes = stdout_file.read(read_limit)
         stderr_bytes = stderr_file.read(read_limit)
     returncode = process.returncode
-    if (timed_out or exceeded) and returncode == 0:
-        returncode = -1  # a killed command must never look successful
+    if (timed_out or cancelled or exceeded) and returncode == 0:
+        # A stopped command must never look successful, even if the child
+        # handled SIGTERM itself and exited 0 (POSIX).
+        returncode = -1
     return ProcessResult(
         command=command,
         returncode=returncode,
