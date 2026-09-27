@@ -37,7 +37,7 @@
 - 安装请求冻结 APK/HAP 路径和当时计算出的 Android `allow_test`，之后切换下拉框不会改变进行中的任务。
 - 已选设备断开会提示；单设备场景允许 preflight 后自动选择。
 - 用户主动中止显示“已中止”；命令失败显示“安装失败”；目标被跳过显示“安装未完成”；运行异常显示“安装异常”。
-- Windows 下外部命令使用无控制台模式，避免弹窗闪现。
+- 安装判定：非零退出码失败；退出码 0 但某行以明确失败标记开头（hdc `[Fail]` / `error: failed to install`，adb `Failure [` / `adb: failed to install`）也判失败。输出文字永远不能把非零退出码改判为成功；stderr 本身只是输出通道。
 
 ## Harmony APP 日志
 
@@ -52,9 +52,13 @@
 
 ## 设备与工具
 
-- Android 探测：`adb devices -l`，过滤 `emulator-*`。
+- 所有外部命令（adb/hdc/aapt2/restool）只通过 `infra/process.run` 执行：无控制台窗口、stdin 为空、输出写临时文件（不会因管道写满而卡住）、支持超时/取消/输出上限；无法启动抛 `ToolLaunchError`，其余结果均为 `ProcessResult`。
+- 超时：设备检测/UDID 15 秒，日志拉取 120 秒，安装不设超时但可中止。
+- Android 探测：`adb devices -l`，过滤 `emulator-*`。adb 缺失、失败或超时记为 Android 探测错误，与 HDC 对称；任一平台探测失败时保留另一平台设备，且不做“单设备自动选择”。
 - Harmony 探测：`hdc list targets`。
-- HDC 路径统一由 `services/hdc.py` 解析，优先级为显式环境配置、DevEco SDK、PATH 和 Windows 常见安装位置；显式配置无效时直接报错，不静默换用其他工具。
+- 工具路径统一由 `infra/tools.py` 解析；显式配置无效时直接报错，不静默换用其他工具。
+  - ADB：`ADB_EXECUTABLE` → PATH → `ANDROID_SDK_ROOT`/`ANDROID_HOME` 的 `platform-tools` → Windows `%LOCALAPPDATA%\Android\Sdk`。
+  - HDC：`HDC_EXECUTABLE` → `HDC_PATH` → `DEVECO_SDK_HOME` → PATH → Windows 常见安装位置。
 - UDID、Harmony 安装、崩溃日志以及乾崑/Demo APP 日志均复用同一套 HDC 路径规则。
 
 ## 配置
@@ -81,7 +85,9 @@ Windows 配置文件：`%APPDATA%/install_new_apk_hap/app_config.json`。
 - `src/services/package_scanner.py`：候选包扫描和 mtime 排序。
 - `src/services/package_metadata.py`：APK/HAP 元数据读取。
 - `src/services/package_label_loader.py`：异步元数据 worker、缓存和文件指纹校验。
-- `src/services/hdc.py`：HDC 可执行文件解析。
+- `src/infra/process.py`：唯一的外部命令执行入口。
+- `src/infra/tools.py`：adb/hdc 路径解析与共用的可执行文件判定。
+- `src/services/hdc.py`：兼容入口，转发到 `infra/tools.py`（平台驱动落地后移除）。
 
 ## 测试与发布
 

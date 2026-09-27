@@ -1,4 +1,3 @@
-import subprocess
 import sys
 from pathlib import Path
 
@@ -7,23 +6,16 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+from infra import process
 from services import installer
 
 
-class FakeProcess:
-    returncode = 0
-
-    def wait(self, timeout):
-        return 0
-
-    def communicate(self, timeout=None):
-        return "installed", ""
-
-
 def test_install_result_records_elapsed_time(monkeypatch, hdc_executable) -> None:
-    clock = iter([10.0, 12.345])
-    monkeypatch.setattr(installer.time, "perf_counter", lambda: next(clock))
-    monkeypatch.setattr(subprocess, "Popen", lambda *_args, **_kwargs: FakeProcess())
+    def run(command, **kwargs):
+        assert kwargs == {"cancel": None}  # installs are stoppable but never time out
+        return process.ProcessResult(command, 0, b"installed", b"", 2.345)
+
+    monkeypatch.setattr(process, "run", run)
 
     result = installer.install_harmony(
         "harmony-device",
@@ -38,4 +30,5 @@ def test_install_result_records_elapsed_time(monkeypatch, hdc_executable) -> Non
         "Harmony release.hap",
     ]
     assert result.process.returncode == 0
+    assert result.process.stdout == "installed"
     assert result.duration_seconds == pytest.approx(2.345)

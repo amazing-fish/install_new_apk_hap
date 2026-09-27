@@ -307,7 +307,7 @@ def test_stale_refresh_result_does_not_replace_newer_device_list() -> None:
     app._latest_refresh_request_id = 2
     applied_results = []
 
-    def record_apply(devices):
+    def record_apply(devices, **_probe_errors):
         applied_results.append(devices)
 
     app._apply_device_refresh = record_apply

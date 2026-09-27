@@ -20,7 +20,56 @@ def hdc_executable(monkeypatch, tmp_path):
 
 
 @pytest.fixture
-def app(monkeypatch, tmp_path, request, hdc_executable):
+def adb_executable(monkeypatch, tmp_path):
+    import os
+    tool = tmp_path / 'platform tools' / ('adb.exe' if os.name == 'nt' else 'adb')
+    tool.parent.mkdir()
+    tool.touch()
+    tool.chmod(0o755)
+    monkeypatch.setenv('ADB_EXECUTABLE', str(tool))
+    return str(tool.resolve())
+
+
+class FakeProcess:
+    """Replace infra.process.run; handler(command, **kwargs) returns
+    (returncode, stdout, stderr), a CompletedProcess, or raises OSError."""
+
+    def __init__(self):
+        self.calls = []
+        self.handler = lambda command, **kwargs: (0, '', '')
+
+    def __call__(self, command, **kwargs):
+        from infra import process
+        import subprocess
+        command = [str(part) for part in command]
+        self.calls.append((command, kwargs))
+        try:
+            outcome = self.handler(command, **kwargs)
+        except OSError as error:
+            raise process.ToolLaunchError(command, error) from error
+        if isinstance(outcome, subprocess.CompletedProcess):
+            outcome = (outcome.returncode, outcome.stdout or '', outcome.stderr or '')
+        returncode, stdout, stderr, *flags = outcome
+        return process.ProcessResult(
+            command, returncode, stdout.encode('utf-8'), stderr.encode('utf-8'), 0.0,
+            **(flags[0] if flags else {}), encoding='utf-8',
+        )
+
+    @property
+    def commands(self):
+        return [command for command, _kwargs in self.calls]
+
+
+@pytest.fixture
+def fake_process(monkeypatch):
+    from infra import process
+    fake = FakeProcess()
+    monkeypatch.setattr(process, 'run', fake)
+    return fake
+
+
+@pytest.fixture
+def app(monkeypatch, tmp_path, request, hdc_executable, adb_executable):
     monkeypatch.setattr(main.App, '_get_config_path', lambda self: tmp_path / 'config.json')
     monkeypatch.setattr(main.App, 'refresh_devices', lambda self: None)
     monkeypatch.setattr(main.App, 'load_last_scan_dir', lambda self: None)
