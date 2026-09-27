@@ -69,6 +69,10 @@ def ui_scale(window: tk.Misc) -> float:
     return max(1.0, float(window.tk.call("tk", "scaling")) * 72 / 96)
 
 
+def scaled_default_width(window: tk.Misc) -> int:
+    return round((sum(width for _, _, width in DEVICE_COLUMN_STYLES) + 60) * ui_scale(window))
+
+
 def apply_theme(window: tk.Tk) -> bool:
     """Use Sun Valley light when it loads; otherwise keep the native theme."""
     try:
@@ -107,9 +111,7 @@ def theme_active(window: tk.Misc) -> bool:
 def configure_window(window: tk.Tk) -> None:
     window.title(WINDOW_TITLE)
     themed = apply_theme(window)
-    scale = ui_scale(window)
-    width = round((sum(width for _, _, width in DEVICE_COLUMN_STYLES) + 60) * scale)
-    window.geometry(f"{width}x{round(DEFAULT_HEIGHT * scale)}")
+    window.geometry(f"{scaled_default_width(window)}x{round(DEFAULT_HEIGHT * ui_scale(window))}")
     window.minsize(*MIN_WINDOW_SIZE)
     style = ttk.Style(window)
     body = tkfont.nametofont("SunValleyBodyFont" if themed else "TkDefaultFont", root=window)
@@ -157,7 +159,9 @@ def fit_initial_window(window: tk.Tk, tree: ttk.Treeview) -> None:
     window.update_idletasks()
     width = window.winfo_width() + tree.winfo_reqwidth() - tree.winfo_width()
     height = round(DEFAULT_HEIGHT * ui_scale(window))
-    window.geometry(f'{max(MIN_WINDOW_SIZE[0], width)}x{height}')
+    # Never narrower than the display-scaled default: scaled text needs the room.
+    width = max(MIN_WINDOW_SIZE[0], scaled_default_width(window), width)
+    window.geometry(f'{width}x{height}')
 
 
 def fit_device_columns(tree: ttk.Treeview) -> None:
