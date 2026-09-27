@@ -3,11 +3,11 @@
 from pathlib import Path
 from typing import Dict, Iterable, Optional, Sequence, Tuple
 
-from services.device_detector import DeviceInfo
+from platforms import DRIVERS, DeviceInfo
 
 
 DEVICE_DISPLAY_COLUMNS = ("name", "platform", "status", "device_id")
-PLATFORM_LABELS = {"android": "Android", "harmony": "Harmony"}
+PLATFORM_LABELS = {key: driver.label for key, driver in DRIVERS.items()}
 
 
 def get_device_display_name(device_id: str, name_mapping: Dict[str, str]) -> str:
@@ -34,9 +34,10 @@ def format_device_tree_values(
 def format_device_summary(devices: Sequence[DeviceInfo]) -> str:
     if not devices:
         return "未检测到设备"
-    android_count = sum(device.platform == "android" for device in devices)
-    harmony_count = sum(device.platform == "harmony" for device in devices)
-    return f"总计 {len(devices)} 台 · Android {android_count} 台 · Harmony {harmony_count} 台"
+    counts = " · ".join(
+        f"{driver.label} {sum(device.platform == key for device in devices)} 台" for key, driver in DRIVERS.items()
+    )
+    return f"总计 {len(devices)} 台 · {counts}"
 
 
 def format_selected_device_summary(

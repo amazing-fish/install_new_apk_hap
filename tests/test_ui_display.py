@@ -5,7 +5,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from services.device_detector import DeviceInfo
+from platforms import DeviceInfo
 from ui_display import (
     format_device_summary,
     format_device_tree_values,

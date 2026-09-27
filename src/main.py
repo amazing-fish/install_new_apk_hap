@@ -4,25 +4,14 @@ import subprocess
 import threading
 import time
 import tkinter as tk
-from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from typing import Dict, Iterable, List, Optional, Set, Tuple
 
 from config_manager import ConfigManager
-from services.device_detector import DeviceInfo, detect_devices, get_hdc_device_udid
-from services.installer import (
-    HARMONY_APP_LOG_TARGETS,
-    InstallResult,
-    build_android_install_command,
-    build_harmony_install_command,
-    install_android,
-    install_harmony,
-    run_android_dropbox_dump,
-    run_harmony_app_log_zip,
-    run_harmony_recent_crash_zip,
-)
+from platforms import DRIVERS, DeviceInfo, detect_devices, driver_for
+from platforms.base import CollectResult, InstallResult, PlatformDriver
 from services.package_scanner import find_latest_packages
 from services.package_label_loader import PackageLabelLoader, file_fingerprint
 from services.package_metadata import package_display_labels
@@ -33,16 +22,9 @@ from ui_display import (
     format_package_summary,
     format_selected_device_summary,
     get_device_display_name,
-    PLATFORM_LABELS,
 )
 from ui_layout import build_ui
 from ui_styles import DEVICE_LIST_MIN_ROWS, DEVICE_LIST_MAX_ROWS, configure_window, fit_device_columns, fit_initial_window
-
-
-@dataclass(frozen=True)
-class CrashLogTarget:
-    platform: str
-    output_path: Path
 
 
 def reorder_devices_for_refresh(
@@ -53,14 +35,6 @@ def reorder_devices_for_refresh(
     new_devices = [device for device in devices if device.device_id in new_device_ids]
     existing_devices = [device for device in devices if device.device_id not in new_device_ids]
     return new_devices + existing_devices, new_device_ids
-
-
-def build_crash_log_target(device: DeviceInfo, output_dir: Path) -> CrashLogTarget:
-    if device.platform == "android":
-        return CrashLogTarget(platform="android", output_path=output_dir / "crash.log")
-    if device.platform == "harmony":
-        return CrashLogTarget(platform="harmony", output_path=output_dir)
-    raise ValueError(f"unsupported device platform: {device.platform}")
 
 
 def format_command_for_log(command: Iterable[str]) -> str:
@@ -249,29 +223,24 @@ class App(tk.Tk):
         self.device_summary_var.set(format_device_summary(self.devices))
         fit_device_columns(self.device_tree)
         self.on_device_select(None)
-        android_count = sum(1 for device in self.devices if device.platform == "android")
-        harmony_count = sum(1 for device in self.devices if device.platform == "harmony")
+        counts = {key: sum(device.platform == key for device in self.devices) for key in DRIVERS}
         total_count = len(self.devices)
         if probe_errors:
-            counts = {"android": android_count, "harmony": harmony_count}
             if summary_label != "设备列表已刷新":
                 parts = [
-                    f"{PLATFORM_LABELS[platform]} 探测失败" if platform in probe_errors
-                    else f"{PLATFORM_LABELS[platform]} {counts[platform]} 台"
-                    for platform in counts
+                    f"{driver.label} 探测失败" if key in probe_errors else f"{driver.label} {counts[key]} 台"
+                    for key, driver in DRIVERS.items()
                 ]
                 self.log(f"{summary_label}：{'，'.join(parts)}")
-            kept = [f"{PLATFORM_LABELS[platform]} {counts[platform]} 台" for platform in counts if platform not in probe_errors]
+            kept = [f"{driver.label} {counts[key]} 台" for key, driver in DRIVERS.items() if key not in probe_errors]
             kept_text = f"；已保留检测到的 {'、'.join(kept)}" if kept else ""
-            for platform, error in probe_errors.items():
-                self.log(f"{PLATFORM_LABELS[platform]} 设备探测失败：{error}{kept_text}")
+            for key, error in probe_errors.items():
+                self.log(f"{DRIVERS[key].label} 设备探测失败：{error}{kept_text}")
         elif log_result and total_count == 0:
             self.log(f"{summary_label}：未检测到设备")
         elif log_result:
-            self.log(
-                f"{summary_label}："
-                f"Android {android_count} 台, Harmony {harmony_count} 台, 总计 {total_count} 台"
-            )
+            per_platform = ", ".join(f"{driver.label} {counts[key]} 台" for key, driver in DRIVERS.items())
+            self.log(f"{summary_label}：{per_platform}, 总计 {total_count} 台")
             if new_device_ids:
                 new_device_text = self._device_labels_for_log(sorted(new_device_ids))
                 self.log(f"新增设备已置顶高亮: {new_device_text}")
@@ -331,21 +300,19 @@ class App(tk.Tk):
             messagebox.showwarning("提示", "设备信息不存在，请先刷新设备")
             self.log(f"获取 UDID 失败：设备 {device_label} 信息不存在")
             return
-        if device.platform == "android":
-            messagebox.showwarning("提示", "仅支持NEXT")
-            self.log(f"获取 UDID 失败：设备 {device_label} 为 Android，仅支持 NEXT")
-            return
-        if device.platform != "harmony":
+        driver = driver_for(device.platform)
+        if driver is None or not driver.supports_udid:
+            platform_label = driver.label if driver else device.platform
             messagebox.showwarning("提示", "仅支持 NEXT 设备获取 UDID")
-            self.log(f"获取 UDID 失败：设备 {device_label} 平台不支持")
+            self.log(f"获取 UDID 失败：设备 {device_label} 为 {platform_label}，仅支持 NEXT")
             return
         self._set_udid_fetch_state(True)
         self.log(f"开始获取设备 UDID: {device_label}")
-        threading.Thread(target=self._fetch_hdc_udid_worker, args=(device_id,), daemon=True).start()
+        threading.Thread(target=self._fetch_hdc_udid_worker, args=(device_id, driver), daemon=True).start()
 
-    def _fetch_hdc_udid_worker(self, device_id: str) -> None:
+    def _fetch_hdc_udid_worker(self, device_id: str, driver: PlatformDriver) -> None:
         try:
-            udid = get_hdc_device_udid(device_id)
+            udid = driver.udid(device_id)
         except Exception as error:
             self.after(0, self._apply_hdc_udid_error, device_id, error)
             return
@@ -713,7 +680,9 @@ class App(tk.Tk):
         self.crash_log_button.config(
             text="获取崩溃日志中…" if fetching and operation == "崩溃日志" else "获取崩溃日志"
         )
-        app_log_operation = operation in {target.display_name for target in HARMONY_APP_LOG_TARGETS.values()}
+        app_log_operation = operation in {
+            target.display_name for driver in DRIVERS.values() for target in driver.app_log_targets.values()
+        }
         self.app_log_button.config(
             text=f"获取{operation}中…" if fetching and app_log_operation else "获取APP日志"
         )
@@ -722,12 +691,15 @@ class App(tk.Tk):
     def _update_device_actions(self) -> None:
         selection = self.device_tree.selection()
         device = next((d for d in self.devices if len(selection) == 1 and d.device_id == selection[0]), None)
+        driver = driver_for(device.platform) if device else None
         busy = self.refreshing or self.installing or self.udid_fetching or self.crash_log_fetching
-        harmony = device is not None and device.platform == "harmony"
-        supported = device is not None and device.platform in ("android", "harmony")
-        self.udid_button.config(state=tk.NORMAL if harmony and not busy else tk.DISABLED)
-        self.app_log_button.config(state=tk.NORMAL if harmony and not busy else tk.DISABLED)
-        self.crash_log_button.config(state=tk.NORMAL if supported and not busy else tk.DISABLED)
+
+        def state(capable: bool) -> str:
+            return tk.NORMAL if capable and not busy else tk.DISABLED
+
+        self.udid_button.config(state=state(driver is not None and driver.supports_udid))
+        self.app_log_button.config(state=state(driver is not None and bool(driver.app_log_targets)))
+        self.crash_log_button.config(state=state(driver is not None))
 
     def _get_log_output_dir(self) -> Path:
         if os.name == "nt":
@@ -757,43 +729,27 @@ class App(tk.Tk):
             messagebox.showwarning("提示", "设备信息不存在，请先刷新设备")
             self.log(f"获取崩溃日志失败：设备 {device_label} 信息不存在")
             return
-        try:
-            target = build_crash_log_target(device, self._get_log_output_dir())
-        except ValueError:
+        driver = driver_for(device.platform)
+        if driver is None:
             messagebox.showwarning("提示", "仅支持 Android 或 Harmony 设备")
             self.log(f"获取崩溃日志失败：设备 {device_label} 平台不支持")
             return
+        output_dir = self._get_log_output_dir()
         self._set_crash_log_fetch_state(True)
-        if target.platform == "android":
-            self.log(f"开始获取 Android 崩溃日志: {device_label} -> {target.output_path}")
-            threading.Thread(
-                target=self._fetch_android_crash_log_worker,
-                args=(device_id, target.output_path),
-                daemon=True,
-            ).start()
-            return
-        self.log(f"开始获取 Harmony 最近 7 天崩溃日志: {device_label} -> {target.output_path}")
+        self.log(f"开始获取{driver.crash_log_description}: {device_label} -> {driver.crash_log_destination(output_dir)}")
         threading.Thread(
-            target=self._fetch_harmony_crash_log_worker,
-            args=(device_id, target.output_path),
+            target=self._fetch_crash_log_worker,
+            args=(device_id, driver, output_dir),
             daemon=True,
         ).start()
 
-    def _fetch_android_crash_log_worker(self, device_id: str, log_path: Path) -> None:
+    def _fetch_crash_log_worker(self, device_id: str, driver: PlatformDriver, output_dir: Path) -> None:
         try:
-            result = run_android_dropbox_dump(device_id, log_path)
+            result = driver.collect_crash_log(device_id, output_dir)
         except Exception as error:
             self.after(0, self._apply_log_collection_error, "获取崩溃日志", device_id, error)
             return
-        self.after(
-            0,
-            self._apply_android_crash_log_result,
-            device_id,
-            log_path,
-            result.command,
-            result.process.returncode,
-            result.process.stderr,
-        )
+        self.after(0, self._apply_crash_log_result, device_id, driver, result)
 
     def _apply_log_collection_error(self, operation: str, device_id: str, error: Exception) -> None:
         self._set_crash_log_fetch_state(False)
@@ -801,67 +757,26 @@ class App(tk.Tk):
         messagebox.showwarning("提示", f"{operation}失败，设备 {device_label}: {error}")
         self.log(f"{operation}失败：设备 {device_label}\n{error}")
 
-    def _apply_android_crash_log_result(
-        self,
-        device_id: str,
-        log_path: Path,
-        command: List[str],
-        returncode: int,
-        stderr: str,
-    ) -> None:
+    def _apply_crash_log_result(self, device_id: str, driver: PlatformDriver, result: CollectResult) -> None:
         self._set_crash_log_fetch_state(False)
         device_label = self._device_label(device_id)
-        self.log(f"Android {device_label} 崩溃日志命令: {' '.join(command)}")
-        if returncode != 0:
-            messagebox.showwarning("提示", f"获取崩溃日志失败，设备 {device_label} 返回码: {returncode}")
-            self.log(f"获取崩溃日志失败：设备 {device_label} 返回码 {returncode}\n{stderr}")
+        process = result.process
+        self.log(f"{driver.label} {device_label} 崩溃日志命令: {format_command_for_log(result.command)}")
+        if process.returncode != 0:
+            messagebox.showwarning("提示", f"获取崩溃日志失败，设备 {device_label} 返回码: {process.returncode}")
+            self.log(f"获取崩溃日志失败：设备 {device_label} 返回码 {process.returncode}\n{process.stderr}")
             return
-        messagebox.showinfo("提示", f"已写入崩溃日志：{log_path}")
-        self.log(f"获取崩溃日志成功：设备 {device_label}，输出已追加到 {log_path}")
-
-    def _fetch_harmony_crash_log_worker(self, device_id: str, output_dir: Path) -> None:
-        try:
-            result = run_harmony_recent_crash_zip(device_id, output_dir, days=7)
-        except Exception as error:
-            self.after(0, self._apply_log_collection_error, "获取崩溃日志", device_id, error)
+        if result.zip_path:
+            messagebox.showinfo("提示", f"已打包{driver.crash_log_description}：{result.zip_path}")
+            self.log(f"获取崩溃日志成功：设备 {device_label}，共 {result.file_count} 个文件，ZIP: {result.zip_path}")
             return
-        self.after(
-            0,
-            self._apply_harmony_crash_log_result,
-            device_id,
-            output_dir,
-            result.command,
-            result.process.returncode,
-            result.process.stdout,
-            result.process.stderr,
-            result.zip_path,
-            result.file_count,
-        )
-
-    def _apply_harmony_crash_log_result(
-        self,
-        device_id: str,
-        output_dir: Path,
-        command: List[str],
-        returncode: int,
-        stdout: str,
-        stderr: str,
-        zip_path: Optional[Path],
-        file_count: int,
-    ) -> None:
-        self._set_crash_log_fetch_state(False)
-        device_label = self._device_label(device_id)
-        self.log(f"Harmony {device_label} 崩溃日志命令: {' '.join(command)}")
-        if returncode != 0:
-            messagebox.showwarning("提示", f"获取崩溃日志失败，设备 {device_label} 返回码: {returncode}")
-            self.log(f"获取崩溃日志失败：设备 {device_label} 返回码 {returncode}\n{stderr}")
+        if result.appended_to:
+            messagebox.showinfo("提示", f"已写入崩溃日志：{result.appended_to}")
+            self.log(f"获取崩溃日志成功：设备 {device_label}，输出已追加到 {result.appended_to}")
             return
-        if not zip_path:
-            messagebox.showwarning("提示", f"最近 7 天未打包到 crash 日志，请检查设备路径（目录：{output_dir}）")
-            self.log(f"获取崩溃日志完成但无输出：设备 {device_label}\n{stderr or stdout}")
-            return
-        messagebox.showinfo("提示", f"已打包最近 7 天崩溃日志：{zip_path}")
-        self.log(f"获取崩溃日志成功：设备 {device_label}，共 {file_count} 个文件，ZIP: {zip_path}")
+        diagnostics = (process.stderr or process.stdout or "").strip()
+        messagebox.showwarning("提示", f"未获取到{driver.crash_log_description}" + (f"：{diagnostics}" if diagnostics else ""))
+        self.log(f"获取崩溃日志完成但无输出：设备 {device_label}" + (f"\n{diagnostics}" if diagnostics else ""))
 
     def fetch_qiankun_log(self) -> None:
         self._fetch_harmony_app_log("qiankun")
@@ -870,7 +785,9 @@ class App(tk.Tk):
         self._fetch_harmony_app_log("demo")
 
     def _fetch_harmony_app_log(self, target_key: str) -> None:
-        target = HARMONY_APP_LOG_TARGETS[target_key]
+        target = next(
+            driver.app_log_targets[target_key] for driver in DRIVERS.values() if target_key in driver.app_log_targets
+        )
         if self.crash_log_fetching:
             self.log(f"日志任务进行中：{self.log_operation or '日志'}，请稍候")
             return
@@ -886,7 +803,8 @@ class App(tk.Tk):
             messagebox.showwarning("提示", "设备信息不存在，请先刷新设备")
             self.log(f"获取{target.display_name}失败：设备 {device_label} 信息不存在")
             return
-        if device.platform != "harmony":
+        driver = driver_for(device.platform)
+        if driver is None or target_key not in driver.app_log_targets:
             messagebox.showwarning("提示", "仅支持 Harmony 设备")
             self.log(f"获取{target.display_name}失败：设备 {device_label} 非 Harmony")
             return
@@ -898,7 +816,7 @@ class App(tk.Tk):
         )
         threading.Thread(
             target=self._fetch_harmony_app_log_worker,
-            args=(device_id, output_dir, target_key),
+            args=(device_id, output_dir, target_key, driver),
             daemon=True,
         ).start()
 
@@ -907,38 +825,19 @@ class App(tk.Tk):
         device_id: str,
         output_dir: Path,
         target_key: str,
+        driver: PlatformDriver,
     ) -> None:
-        target = HARMONY_APP_LOG_TARGETS[target_key]
+        target = driver.app_log_targets[target_key]
         try:
-            result = run_harmony_app_log_zip(device_id, output_dir, target_key)
+            result = driver.collect_app_log(device_id, output_dir, target_key)
         except Exception as error:
             self.after(0, self._apply_log_collection_error, f"获取{target.display_name}", device_id, error)
             return
-        self.after(
-            0,
-            self._apply_harmony_app_log_result,
-            device_id,
-            target_key,
-            result.command,
-            result.process.returncode,
-            result.process.stdout,
-            result.process.stderr,
-            result.zip_path,
-            result.file_count,
-        )
+        self.after(0, self._apply_harmony_app_log_result, device_id, target, result)
 
-    def _apply_harmony_app_log_result(
-        self,
-        device_id: str,
-        target_key: str,
-        command: List[str],
-        returncode: int,
-        stdout: str,
-        stderr: str,
-        zip_path: Optional[Path],
-        file_count: int,
-    ) -> None:
-        target = HARMONY_APP_LOG_TARGETS[target_key]
+    def _apply_harmony_app_log_result(self, device_id: str, target, result: CollectResult) -> None:
+        command, zip_path, file_count = result.command, result.zip_path, result.file_count
+        returncode, stdout, stderr = result.process.returncode, result.process.stdout, result.process.stderr
         self._set_crash_log_fetch_state(False)
         device_label = self._device_label(device_id)
         self.log(f"{target.display_name}命令: {format_command_for_log(command)}")
@@ -982,6 +881,7 @@ class App(tk.Tk):
         install_failed = False
         failed_commands = 0
         skipped_targets = 0
+        packages = {"APK": selected_apk, "HAP": selected_hap}
         try:
             for device_id in selection:
                 device_label = self._device_label(device_id)
@@ -994,40 +894,20 @@ class App(tk.Tk):
                     skipped_targets += 1
                     self._log_threadsafe(f"{device_label}: 设备信息未找到，跳过")
                     continue
-                if device.platform == "android":
-                    if not selected_apk:
-                        skipped_targets += 1
-                        self._log_threadsafe(f"{device_label}: 未找到 APK，跳过")
-                        continue
-                    command = build_android_install_command(
-                        device_id,
-                        selected_apk,
-                        allow_test,
-                    )
-                    self._log_threadsafe(
-                        f"Android {device_label} 开始执行命令: "
-                        f"{format_command_for_log(command)}"
-                    )
-                    result = install_android(
-                        device_id,
-                        selected_apk,
-                        allow_test,
-                        self.install_stop_event,
-                        adb_executable=command[0],
-                    )
-                    self._log_install_result("Android", device_label, result)
-                else:
-                    if not selected_hap:
-                        skipped_targets += 1
-                        self._log_threadsafe(f"{device_label}: 未找到 HAP，跳过")
-                        continue
-                    command = build_harmony_install_command(device_id, selected_hap)
-                    self._log_threadsafe(
-                        f"Harmony {device_label} 开始执行命令: "
-                        f"{format_command_for_log(command)}"
-                    )
-                    result = install_harmony(device_id, selected_hap, self.install_stop_event, hdc_executable=command[0])
-                    self._log_install_result("Harmony", device_label, result)
+                driver = driver_for(device.platform)
+                package = packages.get(driver.package_kind) if driver else None
+                if not package:
+                    skipped_targets += 1
+                    kind = driver.package_kind if driver else "可安装包"
+                    self._log_threadsafe(f"{device_label}: 未找到 {kind}，跳过")
+                    continue
+                # Resolve the tool once: the logged command is the executed command.
+                command = driver.install_command(device_id, package, allow_test=allow_test)
+                self._log_threadsafe(
+                    f"{driver.label} {device_label} 开始执行命令: {format_command_for_log(command)}"
+                )
+                result = driver.install(command, self.install_stop_event)
+                self._log_install_result(driver.label, device_label, result)
                 if self.install_stop_event.is_set():
                     cancelled_by_user = True
                     self._log_threadsafe(f"{device_label}: 安装已中止")

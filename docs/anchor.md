@@ -48,9 +48,12 @@
 - 实际命令为 `hdc -t <device_id> file recv <remote_path> <temporary_local_path>`。
 - 拉取成功后将临时目录打包为 ZIP；Windows 输出到 `D:\`，文件名前缀分别为 `qiankun_logs_`、`demo_logs_`。
 - `recv` 非零返回码必须保留完整命令、stdout/stderr 与返回码；命令成功但本地没有任何文件时明确报告空结果，不生成空 ZIP。
-- 两种应用日志共享同一个拉取/打包实现；旧 `run_harmony_nextdemo_log_zip()` 仅作为内部兼容入口映射到 Demo 固定路径，不再执行搜索。
+- 两种应用日志共享同一个拉取/打包实现（`HarmonyDriver.collect_app_log`），目标表为 `platforms/harmony.py` 中的 `APP_LOG_TARGETS`。
 
 ## 设备与工具
+
+- 平台差异只写在 `platforms/` 的驱动里：调用方按 `driver_for(device.platform)` 取驱动，按能力（`package_kind`、`supports_udid`、`app_log_targets`）决定按钮可用性和操作校验，不按平台名分支。
+- 崩溃日志只有一个流程：结果要么打包为 ZIP（`zip_path`），要么追加到文件（`appended_to`），两者都没有时按“无输出”提示并附原因。
 
 - 所有外部命令（adb/hdc/aapt2/restool）只通过 `infra/process.run` 执行：无控制台窗口、stdin 为空、输出写临时文件（不会因管道写满而卡住）、支持超时/取消/输出上限；无法启动抛 `ToolLaunchError`，其余结果均为 `ProcessResult`。
 - 超时：设备检测/UDID 15 秒，日志拉取 120 秒，安装不设超时但可中止。
@@ -80,14 +83,12 @@ Windows 配置文件：`%APPDATA%/install_new_apk_hap/app_config.json`。
 - `src/ui_widgets.py`：页面滚动、自动隐藏滚动条和操作行布局。
 - `src/ui_display.py`：无 Tk 依赖的显示格式化。
 - `src/config_manager.py`：最小配置持久化。
-- `src/services/device_detector.py`：ADB/HDC 设备探测。
-- `src/services/installer.py`：安装命令以及设备日志拉取/打包的命令执行。
+- `src/platforms/`：平台驱动。`base.py` 定义 `DeviceInfo`、`InstallResult`、`CollectResult` 与 `PlatformDriver`；`android.py`（adb）、`harmony.py`（hdc）各实现探测、安装命令、崩溃日志，Harmony 另有 UDID 与 APP 日志；`__init__.py` 提供 `DRIVERS`、`driver_for`、`detect_devices`。
 - `src/services/package_scanner.py`：候选包扫描和 mtime 排序。
 - `src/services/package_metadata.py`：APK/HAP 元数据读取。
 - `src/services/package_label_loader.py`：异步元数据 worker、缓存和文件指纹校验。
 - `src/infra/process.py`：唯一的外部命令执行入口。
 - `src/infra/tools.py`：adb/hdc 路径解析与共用的可执行文件判定。
-- `src/services/hdc.py`：兼容入口，转发到 `infra/tools.py`（平台驱动落地后移除）。
 
 ## 测试与发布
 

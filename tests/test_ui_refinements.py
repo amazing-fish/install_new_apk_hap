@@ -1,7 +1,7 @@
 import pytest
 
 import main
-from services.device_detector import DeviceInfo
+from platforms import DeviceInfo
 
 REFRESH_DEVICES = main.App.refresh_devices
 

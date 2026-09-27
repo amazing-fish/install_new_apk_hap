@@ -92,10 +92,9 @@ def test_worker_status_uses_returncode_not_output_channel(
         after=lambda _delay, callback, *args: callback(*args),
     )
     app._log_install_result = lambda *args: main.App._log_install_result(app, *args)
-    monkeypatch.setattr(main, "build_android_install_command", lambda *_args: command)
-    monkeypatch.setattr(main, "build_harmony_install_command", lambda *_args: command)
-    monkeypatch.setattr(main, "install_android", lambda *_args, **_kwargs: result)
-    monkeypatch.setattr(main, "install_harmony", lambda *_args, **_kwargs: result)
+    for driver in main.DRIVERS.values():
+        monkeypatch.setattr(driver, "install_command", lambda *_args, **_kwargs: command)
+        monkeypatch.setattr(driver, "install", lambda *_args, **_kwargs: result)
 
     main.App._install_worker(app, ["device"], Path("app.apk"), Path("app.hap"), False)
 

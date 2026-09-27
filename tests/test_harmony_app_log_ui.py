@@ -1,5 +1,5 @@
 import main
-from services.device_detector import DeviceInfo
+from platforms import DeviceInfo
 
 
 class DeferredThread:

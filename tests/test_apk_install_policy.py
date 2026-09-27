@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 import main
-from services.device_detector import DeviceInfo
+from platforms import DeviceInfo
 from services.package_metadata import PackageLabel
 
 

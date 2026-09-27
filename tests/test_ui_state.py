@@ -8,7 +8,7 @@ from tkinter import font as tkfont
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import main
-from services.device_detector import DeviceInfo
+from platforms import DeviceInfo
 from services.package_metadata import PackageLabel
 
 

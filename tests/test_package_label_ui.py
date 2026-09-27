@@ -82,7 +82,7 @@ def test_stale_generation_empty_directory_and_changed_file_are_ignored(app, tmp_
 
 
 def test_metadata_apply_does_not_mutate_install_click_snapshot(app, monkeypatch, tmp_path):
-    from services.device_detector import DeviceInfo
+    from platforms import DeviceInfo
     path = tmp_path/'app.apk'; path.touch()
     devices = [DeviceInfo('a', 'android', 'device')]
     app._apply_device_refresh(devices); app.device_tree.selection_set('a')

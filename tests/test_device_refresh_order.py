@@ -8,8 +8,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import main
-from services.device_detector import DeviceInfo
-from services.installer import InstallResult
+from platforms import DeviceInfo
+from platforms.base import InstallResult
 
 
 class FakeTree:
@@ -123,24 +123,6 @@ def test_reorder_devices_for_refresh_moves_new_devices_to_top() -> None:
         "old-harmony",
     ]
     assert new_ids == {"new-harmony", "new-android"}
-
-
-def test_build_crash_log_target_dispatches_by_device_platform() -> None:
-    output_dir = Path("D:/")
-
-    android_target = main.build_crash_log_target(
-        DeviceInfo(device_id="android-device", platform="android", status="device"),
-        output_dir,
-    )
-    harmony_target = main.build_crash_log_target(
-        DeviceInfo(device_id="harmony-device", platform="harmony", status="device"),
-        output_dir,
-    )
-
-    assert android_target.platform == "android"
-    assert android_target.output_path == output_dir / "crash.log"
-    assert harmony_target.platform == "harmony"
-    assert harmony_target.output_path == output_dir
 
 
 def test_get_device_display_name_prefers_saved_name() -> None:
@@ -263,14 +245,12 @@ def test_install_worker_logs_command_before_harmony_result(monkeypatch, hdc_exec
     app.after = lambda *_args: None
     hap_path = Path("Harmony release.hap")
 
-    def fake_install_harmony(device_id, selected_hap, stop_event, **kwargs):
-        assert kwargs['hdc_executable'] == hdc_executable
-        assert device_id == "harmony-device"
-        assert selected_hap == hap_path
+    def fake_install_harmony(command, stop_event):
+        assert command == [hdc_executable, "-t", "harmony-device", "install", str(hap_path)]
         assert stop_event is app.install_stop_event
         assert "开始执行命令" in app.logged_messages[-1]
         return InstallResult(
-            command=["hdc", "-t", device_id, "install", str(selected_hap)],
+            command=command,
             process=subprocess.CompletedProcess(
                 args=[],
                 returncode=0,
@@ -280,7 +260,7 @@ def test_install_worker_logs_command_before_harmony_result(monkeypatch, hdc_exec
             duration_seconds=15.236,
         )
 
-    monkeypatch.setattr(main, "install_harmony", fake_install_harmony)
+    monkeypatch.setattr(main.DRIVERS["harmony"], "install", fake_install_harmony)
 
     main.App._install_worker(
         app,
