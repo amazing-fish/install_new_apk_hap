@@ -158,7 +158,20 @@ hdc -t <device_id> shell bm get --udid
 
 成功后展示并复制到剪贴板。
 
-## HDC 路径配置
+## ADB / HDC 路径配置
+
+### ADB
+
+优先级：
+
+1. `ADB_EXECUTABLE`：完整 adb 可执行文件路径；配置错误时直接报告，不回退。
+2. `PATH`。
+3. `ANDROID_SDK_ROOT` / `ANDROID_HOME` 下的 `platform-tools`（这两个变量常被其他工具共用，无效时跳过）。
+4. Windows：`%LOCALAPPDATA%\Android\Sdk\platform-tools`。
+
+adb 缺失、无法执行、返回非 0 或超时，都作为 Android 探测失败明确记录，已检测到的 Harmony 设备仍会保留，不会显示成“未检测到设备”。
+
+### HDC
 
 设备检测、UDID、HAP 安装、Harmony 崩溃日志和 APP 日志共用同一套 HDC 路径解析。
 
@@ -180,6 +193,14 @@ python src/main.py
 ```
 
 HDC 缺失或执行失败时，已检测到的 Android 设备仍会保留；不会把 Harmony 探测失败伪装成“没有设备”。
+
+### 命令超时
+
+- 设备检测、UDID：15 秒。
+- 崩溃日志、APP 日志拉取：120 秒。
+- 安装：不设超时，可随时中止。
+
+超时的命令会被终止并按失败处理，日志中注明原因。
 
 ## UI 行为
 

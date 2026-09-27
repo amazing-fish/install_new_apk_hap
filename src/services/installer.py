@@ -1,8 +1,6 @@
-import os
 import re
 import subprocess
 import tempfile
-import time
 import zipfile
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -10,7 +8,8 @@ from pathlib import Path
 import threading
 from typing import List, Optional
 
-from services.hdc import resolve_hdc_executable
+from infra import process
+from infra.tools import resolve_adb_executable, resolve_hdc_executable
 
 
 # Some hdc versions, and older adb, exit 0 after printing an explicit failure.
@@ -78,10 +77,6 @@ HARMONY_APP_LOG_TARGETS = {
 }
 
 
-def _command_error_result(command: List[str], error: Exception) -> subprocess.CompletedProcess:
-    return subprocess.CompletedProcess(command, 1, "", f"命令执行失败: {command[0]} ({error})")
-
-
 def _safe_filename_part(value: str) -> str:
     safe = "".join(
         char if char.isalnum() or char in ("-", "_", ".") else "_"
@@ -91,61 +86,56 @@ def _safe_filename_part(value: str) -> str:
 
 
 def _run_install_command(command: List[str], stop_event: Optional[threading.Event]) -> InstallResult:
-    run_kwargs = {"stdout": subprocess.PIPE, "stderr": subprocess.PIPE, "text": True}
-    if os.name == "nt":
-        run_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
-    started_at = time.perf_counter()
-    process = subprocess.Popen(command, **run_kwargs)
-    while True:
-        if stop_event and stop_event.is_set():
-            process.terminate()
-            try:
-                stdout, stderr = process.communicate(timeout=5)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                stdout, stderr = process.communicate()
-            completed = subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
-            return InstallResult(
-                command=command,
-                process=completed,
-                duration_seconds=time.perf_counter() - started_at,
-            )
-        try:
-            process.wait(timeout=0.2)
-        except subprocess.TimeoutExpired:
-            continue
-        stdout, stderr = process.communicate()
-        completed = subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
-        return InstallResult(
-            command=command,
-            process=completed,
-            duration_seconds=time.perf_counter() - started_at,
-        )
+    # Installs can legitimately take minutes; they have no timeout but can be stopped.
+    try:
+        result = process.run(command, cancel=stop_event)
+    except process.ToolLaunchError as error:
+        return InstallResult(command, _launch_failure(command, error), 0.0)
+    return InstallResult(command=command, process=result.completed(), duration_seconds=result.duration_seconds)
 
 
-def run_android_dropbox_dump(device_id: str, log_path: Path) -> CommandResult:
-    command = ["adb", "-s", device_id, "shell", "dumpsys", "dropbox", "--print"]
-    process = _run_command(command)
-    if process.returncode == 0 and process.stdout:
+def _launch_failure(command: List[str], error: OSError) -> subprocess.CompletedProcess:
+    return subprocess.CompletedProcess(command, 1, "", f"命令执行失败: {command[0]} ({error})")
+
+
+def run_android_dropbox_dump(
+    device_id: str,
+    log_path: Path,
+    cancel: Optional[threading.Event] = None,
+) -> CommandResult:
+    command = [resolve_adb_executable(), "-s", device_id, "shell", "dumpsys", "dropbox", "--print"]
+    completed = _run_command(command, cancel)
+    if completed.returncode == 0 and completed.stdout:
         log_path.parent.mkdir(parents=True, exist_ok=True)
         with log_path.open("a", encoding="utf-8", newline="\n") as log_file:
-            log_file.write(process.stdout)
-            if not process.stdout.endswith("\n"):
+            log_file.write(completed.stdout)
+            if not completed.stdout.endswith("\n"):
                 log_file.write("\n")
-    return CommandResult(command=command, process=process)
+    return CommandResult(command=command, process=completed)
 
 
-def _run_command(command: List[str]) -> subprocess.CompletedProcess:
-    run_kwargs = {"stdout": subprocess.PIPE, "stderr": subprocess.PIPE, "text": True}
-    if os.name == "nt":
-        run_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+def _run_command(
+    command: List[str],
+    cancel: Optional[threading.Event] = None,
+) -> subprocess.CompletedProcess:
+    """Log collection: bounded by TRANSFER_TIMEOUT; any interruption is a failure."""
     try:
-        return subprocess.run(command, **run_kwargs)
-    except OSError as error:
-        return _command_error_result(command, error)
+        result = process.run(command, timeout=process.TRANSFER_TIMEOUT, cancel=cancel)
+    except process.ToolLaunchError as error:
+        return _launch_failure(command, error)
+    interruption = process.describe_interruption(result, process.TRANSFER_TIMEOUT)
+    if interruption:
+        stderr = "\n".join(part for part in (result.stderr.strip(), interruption) if part)
+        return subprocess.CompletedProcess(command, result.returncode or -1, result.stdout, stderr)
+    return result.completed()
 
 
-def run_harmony_recent_crash_zip(device_id: str, output_dir: Path, days: int = 7) -> CollectResult:
+def run_harmony_recent_crash_zip(
+    device_id: str,
+    output_dir: Path,
+    days: int = 7,
+    cancel: Optional[threading.Event] = None,
+) -> CollectResult:
     hdc = resolve_hdc_executable()
     remote_crash_dir = "/data/log/faultlog/faultlogger"
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -154,7 +144,7 @@ def run_harmony_recent_crash_zip(device_id: str, output_dir: Path, days: int = 7
     with tempfile.TemporaryDirectory(prefix=f"harmony_crash_{safe_device_id}_", dir=output_dir) as temp_dir:
         receive_dir = Path(temp_dir)
         fetch_command = [hdc, "-t", device_id, "file", "recv", remote_crash_dir, str(receive_dir)]
-        fetch_result = _run_command(fetch_command)
+        fetch_result = _run_command(fetch_command, cancel)
         if fetch_result.returncode != 0:
             return CollectResult(command=fetch_command, process=fetch_result)
 
@@ -202,7 +192,12 @@ def run_harmony_recent_crash_zip(device_id: str, output_dir: Path, days: int = 7
     )
 
 
-def run_harmony_app_log_zip(device_id: str, output_dir: Path, target_key: str) -> CollectResult:
+def run_harmony_app_log_zip(
+    device_id: str,
+    output_dir: Path,
+    target_key: str,
+    cancel: Optional[threading.Event] = None,
+) -> CollectResult:
     """Pull one known Harmony app log directory directly and archive it locally."""
     try:
         target = HARMONY_APP_LOG_TARGETS[target_key]
@@ -229,7 +224,7 @@ def run_harmony_app_log_zip(device_id: str, output_dir: Path, target_key: str) -
             target.remote_path,
             str(receive_target),
         ]
-        recv_result = _run_command(recv_command)
+        recv_result = _run_command(recv_command, cancel)
         if recv_result.returncode != 0:
             return CollectResult(command=recv_command, process=recv_result)
 
@@ -267,8 +262,9 @@ def build_android_install_command(
     device_id: str,
     apk_path: Path,
     allow_test: bool,
+    adb_executable: Optional[str] = None,
 ) -> List[str]:
-    command: List[str] = ["adb", "-s", device_id, "install"]
+    command: List[str] = [adb_executable or resolve_adb_executable(), "-s", device_id, "install"]
     if allow_test:
         command.append("-t")
     command.append(str(apk_path))
@@ -280,9 +276,10 @@ def install_android(
     apk_path: Path,
     allow_test: bool,
     stop_event: Optional[threading.Event] = None,
+    adb_executable: Optional[str] = None,
 ) -> InstallResult:
     return _run_install_command(
-        build_android_install_command(device_id, apk_path, allow_test),
+        build_android_install_command(device_id, apk_path, allow_test, adb_executable),
         stop_event,
     )
 

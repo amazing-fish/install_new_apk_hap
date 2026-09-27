@@ -10,15 +10,13 @@ from pathlib import Path
 import re
 import shutil
 import struct
-import subprocess
 import sys
-import tempfile
-import time
 import unicodedata
 import zipfile
 import zlib
 
-from services.hdc import HdcError, resolve_hdc_executable
+from infra import process
+from infra.tools import HdcError, configured_path, executable_or_none as _executable, resolve_hdc_executable
 
 
 MAX_METADATA_BYTES = 1024 * 1024
@@ -44,13 +42,9 @@ class MetadataTools:
     restool: str | None = None
 
 
-def _executable(path: Path) -> str | None:
-    return str(path.resolve()) if path.is_file() and os.access(path, os.X_OK) else None
-
-
 def _configured_tool(variable: str) -> str | None:
-    value = os.environ[variable].strip().strip('"')
-    return _executable(Path(os.path.expandvars(value)).expanduser()) if value else None
+    value = os.environ[variable].strip()
+    return _executable(configured_path(value)) if value.strip('"') else None
 
 
 def bundled_tools_directory() -> Path | None:
@@ -109,27 +103,15 @@ class MetadataToolError(ValueError):
 
 def _run_tool(command: list[str]) -> str:
     """Keep SDK time and captured output bounded, and hide Windows consoles."""
-    with tempfile.TemporaryFile() as output:
-        with subprocess.Popen(
-            command, stdout=output, stderr=subprocess.STDOUT,
-            creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0,
-        ) as process:
-            deadline = time.monotonic() + TOOL_TIMEOUT
-            try:
-                while process.poll() is None:
-                    if time.monotonic() >= deadline or os.fstat(output.fileno()).st_size > MAX_TOOL_OUTPUT:
-                        raise MetadataReadError('tool limit exceeded')
-                    time.sleep(0.02)
-                if os.fstat(output.fileno()).st_size > MAX_TOOL_OUTPUT:
-                    raise MetadataReadError('tool output limit exceeded')
-                if process.returncode:
-                    raise MetadataToolError('tool failed')
-            finally:
-                if process.poll() is None:
-                    process.kill()
-                    process.wait()
-        output.seek(0)
-        return output.read(MAX_TOOL_OUTPUT + 1).decode('utf-8', errors='strict')
+    result = process.run(
+        command, timeout=TOOL_TIMEOUT, output_limit=MAX_TOOL_OUTPUT,
+        merge_stderr=True, encoding='utf-8', errors='strict', universal_newlines=False,
+    )
+    if result.timed_out or result.output_exceeded:
+        raise MetadataReadError('tool limit exceeded')
+    if result.returncode:
+        raise MetadataToolError('tool failed')
+    return result.stdout
 
 
 def _check_zip_directory(path: Path) -> None:

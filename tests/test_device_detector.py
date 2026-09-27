@@ -7,7 +7,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from services import device_detector
 
 
-def test_detect_adb_devices_ignores_daemon_diagnostic_lines(monkeypatch) -> None:
+def test_detect_adb_devices_ignores_daemon_diagnostic_lines(monkeypatch, adb_executable) -> None:
     output = """List of devices attached
 
 * daemon not running; starting now at tcp:5037
@@ -23,7 +23,7 @@ R5CN1234567 device product:example model:Phone device:phone transport_id:1
     assert devices[0].status == "device"
 
 
-def test_detect_adb_devices_ignores_header_after_diagnostic_lines(monkeypatch) -> None:
+def test_detect_adb_devices_ignores_header_after_diagnostic_lines(monkeypatch, adb_executable) -> None:
     output = """* daemon not running; starting now at tcp:5037
 * daemon started successfully
 List of devices attached

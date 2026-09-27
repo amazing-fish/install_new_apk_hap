@@ -81,9 +81,9 @@ def test_missing_hdc_preserves_android_and_reports_failure(isolated_hdc, monkeyp
 
 
 @pytest.mark.parametrize('code,stdout,stderr', [(7, 'server output', 'server failed'), (0, '[Fail] server unavailable', '')])
-def test_failed_detection_keeps_diagnostics(monkeypatch, hdc_executable, code, stdout, stderr):
+def test_failed_detection_keeps_diagnostics(monkeypatch, hdc_executable, code, stdout, stderr, fake_process):
     monkeypatch.setattr(device_detector, 'detect_adb_devices', lambda: [])
-    monkeypatch.setattr(subprocess, 'run', lambda command, **kwargs: subprocess.CompletedProcess(command, code, stdout, stderr))
+    fake_process.handler = lambda command, **kwargs: subprocess.CompletedProcess(command, code, stdout, stderr)
     result = device_detector.detect_devices()
     assert result.devices == []
     assert f'返回码 {code}' in result.harmony_error
@@ -91,22 +91,22 @@ def test_failed_detection_keeps_diagnostics(monkeypatch, hdc_executable, code, s
     assert hdc_executable in result.harmony_error
 
 
-def test_empty_hdc_result_is_success(monkeypatch, hdc_executable):
+def test_empty_hdc_result_is_success(monkeypatch, hdc_executable, fake_process):
     monkeypatch.setattr(device_detector, 'detect_adb_devices', lambda: [])
-    monkeypatch.setattr(subprocess, 'run', lambda command, **kwargs: subprocess.CompletedProcess(command, 0, '[Empty]', ''))
+    fake_process.handler = lambda command, **kwargs: subprocess.CompletedProcess(command, 0, '[Empty]', '')
     assert device_detector.detect_devices() == DeviceDetectionResult([])
 
 
-def test_hdc_permission_failure_is_not_no_devices(monkeypatch, hdc_executable):
+def test_hdc_permission_failure_is_not_no_devices(monkeypatch, hdc_executable, fake_process):
     def denied(*args, **kwargs):
         raise PermissionError('permission denied')
-    monkeypatch.setattr(subprocess, 'run', denied)
+    fake_process.handler = denied
     with pytest.raises(hdc.HdcError, match='permission denied'):
         device_detector.get_hdc_device_udid('device')
 
 
 @pytest.mark.parametrize('source', ['HDC_EXECUTABLE', 'HDC_PATH', 'DEVECO_SDK_HOME'])
-def test_all_operations_use_same_executable_without_path(isolated_hdc, monkeypatch, tmp_path, source):
+def test_all_operations_use_same_executable_without_path(isolated_hdc, monkeypatch, tmp_path, source, fake_process):
     root = tmp_path / 'SDK with spaces'
     executable = tool_at(root / 'toolchains' if source == 'DEVECO_SDK_HOME' else root)
     monkeypatch.setenv(source, str(executable if source == 'HDC_EXECUTABLE' else root))
@@ -116,9 +116,6 @@ def test_all_operations_use_same_executable_without_path(isolated_hdc, monkeypat
     def record(command, **kwargs):
         seen.append(command)
         assert command[0] == str(executable)
-        assert not kwargs.get('shell', False)
-        if os.name == 'nt':
-            assert kwargs['creationflags'] == subprocess.CREATE_NO_WINDOW
         if command[1:] == ['list', 'targets']:
             output = 'Harmony-01'
         elif command[-1] == '--udid':
@@ -134,17 +131,7 @@ def test_all_operations_use_same_executable_without_path(isolated_hdc, monkeypat
             output = 'installed'
         return subprocess.CompletedProcess(command, 0, output, '')
 
-    class Process:
-        returncode = 0
-        def __init__(self, command, **kwargs):
-            record(command, **kwargs)
-        def wait(self, timeout):
-            return 0
-        def communicate(self, timeout=None):
-            return 'installed', ''
-
-    monkeypatch.setattr(subprocess, 'run', record)
-    monkeypatch.setattr(subprocess, 'Popen', Process)
+    fake_process.handler = record
     assert device_detector.detect_hdc_devices()[0].device_id == 'Harmony-01'
     assert device_detector.get_hdc_device_udid('Harmony-01') == 'udid-value'
     assert installer.install_harmony('Harmony-01', tmp_path / 'app with spaces.hap').process.returncode == 0
@@ -167,7 +154,7 @@ def test_all_operations_use_same_executable_without_path(isolated_hdc, monkeypat
     ),
 ])
 def test_app_logs_use_one_fixed_recv_without_find(
-    monkeypatch, tmp_path, hdc_executable, target_key, expected_remote, expected_prefix,
+    monkeypatch, tmp_path, hdc_executable, target_key, expected_remote, expected_prefix, fake_process,
 ):
     commands = []
 
@@ -179,7 +166,7 @@ def test_app_logs_use_one_fixed_recv_without_find(
         (target / 'app.log').write_text('payload', encoding='utf-8')
         return subprocess.CompletedProcess(command, 0, 'recv ok', '')
 
-    monkeypatch.setattr(subprocess, 'run', run)
+    fake_process.handler = run
     result = installer.run_harmony_app_log_zip('Harmony-01', tmp_path, target_key)
 
     assert len(commands) == 1
@@ -201,10 +188,10 @@ def test_app_logs_use_one_fixed_recv_without_find(
 
 
 @pytest.mark.parametrize('target_key', ['qiankun', 'demo'])
-def test_app_log_receive_failure_retains_return_code(monkeypatch, tmp_path, hdc_executable, target_key):
+def test_app_log_receive_failure_retains_return_code(monkeypatch, tmp_path, hdc_executable, target_key, fake_process):
     def run(command, **kwargs):
         return subprocess.CompletedProcess(command, 23, 'partial output', 'transfer failed')
-    monkeypatch.setattr(subprocess, 'run', run)
+    fake_process.handler = run
     result = installer.run_harmony_app_log_zip('harmony', tmp_path, target_key)
     assert result.process.returncode == 23
     assert result.process.stdout == 'partial output'
@@ -212,12 +199,8 @@ def test_app_log_receive_failure_retains_return_code(monkeypatch, tmp_path, hdc_
     assert result.zip_path is None
 
 
-def test_app_log_empty_success_is_reported_as_empty(monkeypatch, tmp_path, hdc_executable):
-    monkeypatch.setattr(
-        subprocess,
-        'run',
-        lambda command, **kwargs: subprocess.CompletedProcess(command, 0, 'recv ok', ''),
-    )
+def test_app_log_empty_success_is_reported_as_empty(monkeypatch, tmp_path, hdc_executable, fake_process):
+    fake_process.handler = lambda command, **kwargs: subprocess.CompletedProcess(command, 0, 'recv ok', '')
     result = installer.run_harmony_app_log_zip('harmony', tmp_path, 'qiankun')
     assert result.process.returncode == 0
     assert '未发现文件' in result.process.stderr
@@ -225,7 +208,7 @@ def test_app_log_empty_success_is_reported_as_empty(monkeypatch, tmp_path, hdc_e
     assert result.zip_path is None
 
 
-def test_legacy_nextdemo_wrapper_uses_demo_fixed_target(monkeypatch, tmp_path, hdc_executable):
+def test_legacy_nextdemo_wrapper_uses_demo_fixed_target(monkeypatch, tmp_path, hdc_executable, fake_process):
     commands = []
     def run(command, **kwargs):
         commands.append(command)
@@ -233,7 +216,7 @@ def test_legacy_nextdemo_wrapper_uses_demo_fixed_target(monkeypatch, tmp_path, h
         target.mkdir(parents=True, exist_ok=True)
         (target / 'demo.log').write_text('log', encoding='utf-8')
         return subprocess.CompletedProcess(command, 0, '', '')
-    monkeypatch.setattr(subprocess, 'run', run)
+    fake_process.handler = run
     result = installer.run_harmony_nextdemo_log_zip('harmony', tmp_path)
     assert result.file_count == 1
     assert commands[0][-2] == installer.HARMONY_APP_LOG_TARGETS['demo'].remote_path
@@ -245,25 +228,16 @@ def test_unknown_app_log_target_is_rejected(tmp_path):
         installer.run_harmony_app_log_zip('harmony', tmp_path, 'unknown')
 
 
-def test_harmony_install_keeps_resolved_path_and_can_stop(monkeypatch, hdc_executable):
+def test_harmony_install_keeps_resolved_path_and_can_stop(monkeypatch, hdc_executable, fake_process):
     command = installer.build_harmony_install_command('harmony', Path('app.hap'))
     monkeypatch.setenv('HDC_EXECUTABLE', 'invalid-after-command-was-logged.exe')
-    calls = []
-    class Process:
-        returncode = -15
-        def terminate(self):
-            calls.append('terminate')
-        def communicate(self, timeout=None):
-            return '', 'stopped'
-    def start(actual, **kwargs):
-        assert actual == command
-        return Process()
-    monkeypatch.setattr(subprocess, 'Popen', start)
     stop = threading.Event()
     stop.set()
+    fake_process.handler = lambda actual, **kwargs: (-15, '', 'stopped', {'cancelled': kwargs['cancel'].is_set()})
     result = installer.install_harmony('harmony', Path('app.hap'), stop, hdc_executable=command[0])
-    assert calls == ['terminate']
+    assert fake_process.calls == [(command, {'cancel': stop})]
     assert result.process.returncode == -15
+    assert result.process.stderr == 'stopped'
 
 
 def test_refresh_diagnostic_and_recovery_are_visible(app, monkeypatch):
