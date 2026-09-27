@@ -996,7 +996,7 @@ class App(tk.Tk):
                     cancelled_by_user = True
                     self._log_threadsafe(f"{device_label}: 安装已中止")
                     break
-                if result.process.returncode != 0:
+                if result.failure_reason:
                     failed_commands += 1
         except Exception as error:
             install_failed = True
@@ -1027,9 +1027,12 @@ class App(tk.Tk):
         for line in (result.process.stdout or "").splitlines():
             self._log_threadsafe(f"{platform} {device_label} 输出: {line}")
         # stderr is an output channel, not proof that the install failed.
-        stderr_label = "输出 [stderr]" if result.process.returncode == 0 else "错误输出 [stderr]"
+        failure_reason = result.failure_reason
+        stderr_label = "错误输出 [stderr]" if failure_reason else "输出 [stderr]"
         for line in (result.process.stderr or "").splitlines():
             self._log_threadsafe(f"{platform} {device_label} {stderr_label}: {line}")
+        if failure_reason and result.process.returncode == 0:
+            self._log_threadsafe(f"{platform} {device_label} 判定安装失败：{failure_reason}")
 
     def request_stop_install(self) -> None:
         if not self.installing:

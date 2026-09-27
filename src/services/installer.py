@@ -1,4 +1,5 @@
 import os
+import re
 import subprocess
 import tempfile
 import time
@@ -12,11 +13,34 @@ from typing import List, Optional
 from services.hdc import resolve_hdc_executable
 
 
+# Some hdc versions, and older adb, exit 0 after printing an explicit failure.
+# Markers only ever turn an apparent success into a failure; output text never
+# turns a non-zero exit into success.
+INSTALL_FAILURE_MARKERS = (
+    re.compile(r"^\[Fail\]"),                     # hdc: [Fail][E001000] ... / [Fail]Error ...
+    re.compile(r"^error: failed to install", re.I),  # hdc: error: failed to install bundle.
+    re.compile(r"^Failure \["),                    # adb: Failure [INSTALL_FAILED_...]
+    re.compile(r"^adb: failed to install"),         # adb: failed to install app.apk: ...
+)
+
+
 @dataclass
 class InstallResult:
     command: List[str]
     process: subprocess.CompletedProcess
     duration_seconds: float
+
+    @property
+    def failure_reason(self) -> Optional[str]:
+        """None when the install succeeded; otherwise why it counts as failed."""
+        if self.process.returncode != 0:
+            return f"返回码 {self.process.returncode}"
+        for stream in (self.process.stdout, self.process.stderr):
+            for line in (stream or "").splitlines():
+                line = line.strip()
+                if any(marker.match(line) for marker in INSTALL_FAILURE_MARKERS):
+                    return f"输出包含失败标记：{line}"
+        return None
 
 
 @dataclass
