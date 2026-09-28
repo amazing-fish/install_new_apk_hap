@@ -2,9 +2,10 @@ import os
 import threading
 import time
 
-from services import package_label_loader as loader_module
-from services.package_label_loader import file_fingerprint
-from services.package_metadata import MetadataTools, PackageLabel
+from infra.tools import MetadataTools
+from metadata import PackageLabel
+from metadata import loader as loader_module
+from metadata.loader import file_fingerprint
 
 
 def pump_until(app, predicate):

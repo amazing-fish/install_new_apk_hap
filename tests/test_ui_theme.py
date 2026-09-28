@@ -7,7 +7,7 @@ import pytest
 
 import main
 import ui_styles
-from services.package_metadata_cli import run_cli
+from cli import run_cli
 
 
 def test_sun_valley_theme_is_active(app):

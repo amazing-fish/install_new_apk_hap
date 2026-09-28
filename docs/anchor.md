@@ -67,6 +67,7 @@
 - 工具路径统一由 `infra/tools.py` 解析；显式配置无效时直接报错，不静默换用其他工具。
   - ADB：`ADB_EXECUTABLE` → PATH → `ANDROID_SDK_ROOT`/`ANDROID_HOME` 的 `platform-tools` → Windows `%LOCALAPPDATA%\Android\Sdk`。
   - HDC：`HDC_EXECUTABLE` → `HDC_PATH` → `DEVECO_SDK_HOME` → PATH → Windows 常见安装位置。
+  - AAPT2 / RestoolV2：`AAPT2_EXECUTABLE` / `RESTOOL_EXECUTABLE` → exe 内置工具（仅冻结的单文件 exe）→ 源码运行时 PATH 与 SDK（aapt2 取 `build-tools` 最新数字版本，restool 取 HDC 同目录）。元数据可选，缺失或无效时记为不可用而不是报错。
 - UDID、Harmony 安装、崩溃日志以及乾崑/Demo APP 日志均复用同一套 HDC 路径规则。
 
 ## 配置
@@ -90,11 +91,11 @@ Windows 配置文件：`%APPDATA%/install_new_apk_hap/app_config.json`。
 - `src/ui_display.py`：无 Tk 依赖的显示格式化。
 - `src/config_manager.py`：最小配置持久化。
 - `src/platforms/`：平台驱动。`base.py` 定义 `DeviceInfo`、`InstallResult`、`CollectResult` 与 `PlatformDriver`；`android.py`（adb）、`harmony.py`（hdc）各实现探测、安装命令、崩溃日志，Harmony 另有 UDID 与 APP 日志；`__init__.py` 提供 `DRIVERS`、`driver_for`、`detect_devices`。
-- `src/services/package_scanner.py`：候选包扫描和 mtime 排序。
-- `src/services/package_metadata.py`：APK/HAP 元数据读取。
-- `src/services/package_label_loader.py`：异步元数据 worker、缓存和文件指纹校验。
+- `src/packages.py`：候选包扫描和 mtime 排序。
+- `src/metadata/`：APK/HAP 元数据读取。`guard.py` 是读取边界（ZIP/资源大小、工具超时与输出上限、不可信文本过滤），`apk.py`、`hap.py` 只写格式规则且只经 `guard` 读取；`__init__.py` 的 `read_package_label` 按后缀分派并把预期失败映射为显示状态；`display.py` 生成下拉框文本；`loader.py` 是异步 worker、缓存和文件指纹校验。
+- `src/cli.py`：无 GUI 诊断（包元数据报告、许可导出、主题报告）。
 - `src/infra/process.py`：唯一的外部命令执行入口。
-- `src/infra/tools.py`：adb/hdc 路径解析与共用的可执行文件判定。
+- `src/infra/tools.py`：adb/hdc/aapt2/restool 路径解析与共用的可执行文件判定。
 
 ## 测试与发布
 

@@ -14,9 +14,9 @@ from controller import (
 )
 from platforms import DRIVERS, DeviceInfo, detect_devices, driver_for
 from platforms.base import CollectResult, PlatformDriver
-from services.package_scanner import find_latest_packages
-from services.package_label_loader import PackageLabelLoader, file_fingerprint
-from services.package_metadata import package_display_labels
+from metadata.display import package_display_labels
+from metadata.loader import PackageLabelLoader, file_fingerprint
+from packages import find_latest_packages
 from ui_display import (
     format_device_ids_for_log,
     format_device_summary,
@@ -822,7 +822,7 @@ class App(tk.Tk):
 if __name__ == "__main__":
     import sys
     if len(sys.argv) > 1:
-        from services.package_metadata_cli import run_cli
+        from cli import run_cli
         raise SystemExit(run_cli(sys.argv[1:]))
     from ui_styles import enable_high_dpi
     enable_high_dpi()

@@ -3,9 +3,10 @@ import threading
 import time
 import pytest
 
-from services import package_label_loader as loader_module
-from services.package_label_loader import PackageLabelLoader
-from services.package_metadata import MetadataTools, PackageLabel
+from infra.tools import MetadataTools
+from metadata import PackageLabel
+from metadata import loader as loader_module
+from metadata.loader import PackageLabelLoader
 
 
 def test_worker_coalesces_requests_and_caches_unchanged_files(tmp_path, monkeypatch):

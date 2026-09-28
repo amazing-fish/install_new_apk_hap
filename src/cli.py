@@ -6,9 +6,8 @@ import json
 from pathlib import Path
 import shutil
 
-from services.package_metadata import (
-    bundled_tools_directory, read_package_label, resolve_metadata_tools,
-)
+from infra.tools import bundled_tools_directory, resolve_metadata_tools
+from metadata import read_package_label
 
 
 def theme_report() -> dict:
