@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from platforms import DeviceInfo
 from metadata import PackageLabel
+from packages import apk_allow_test
 
 
 def assert_selection_labels(app, expected):
@@ -80,7 +81,7 @@ def test_scan_dropdown_changes_and_empty_directory_reset(app, tmp_path):
         os.utime(path, (100 + index, 100 + index))
     app.folder_var.set(str(packages))
     app.scan_latest_packages()
-    assert app.package_summary_var.get() == "APK new.apk · HAP new.hap"
+    assert (app.apk_combo.get(), app.hap_combo.get()) == ("new.apk", "new.hap")
 
     app.apk_combo.current(1)
     app.apk_combo.event_generate("<<ComboboxSelected>>")
@@ -88,23 +89,25 @@ def test_scan_dropdown_changes_and_empty_directory_reset(app, tmp_path):
     app.hap_combo.event_generate("<<ComboboxSelected>>")
     app.update()
     old_apk = packages / "old.apk"
-    assert app.latest_apk == old_apk
-    assert app.latest_hap == packages / "old.hap"
-    assert app.package_summary_var.get() == "APK old.apk · HAP old.hap"
-    assert app._apk_allow_test(old_apk) is True
+    assert app.packages["APK"].selected == old_apk
+    assert app.packages["HAP"].selected == packages / "old.hap"
+    # The empty fixtures may already carry a "[名称读取失败]" label by now.
+    assert app.apk_combo.get().startswith("old.apk") and app.hap_combo.get().startswith("old.hap")
+    assert apk_allow_test(app.packages["APK"]) is True
 
     # Unsupported/failed metadata stays installable without extra UI state.
     app._apply_package_labels({
         old_apk: PackageLabel(status="unavailable", source="aapt2"),
     })
-    assert app._apk_allow_test(old_apk) is True
+    assert app.packages["APK"].selected == old_apk
+    assert apk_allow_test(app.packages["APK"]) is True
 
     empty = tmp_path / "empty"
     empty.mkdir()
     app.folder_var.set(str(empty))
     app.scan_latest_packages()
-    assert app.latest_apk is None and app.latest_hap is None
-    assert app.package_summary_var.get() == "未找到可安装包"
+    assert app.packages["APK"].selected is None and app.packages["HAP"].selected is None
+    assert app.apk_combo.get() == app.hap_combo.get() == "未找到"
     assert str(app.apk_combo.cget("state")) == "disabled"
     assert str(app.hap_combo.cget("state")) == "disabled"
 
@@ -114,24 +117,23 @@ def test_package_display_changes_do_not_mutate_install_click_snapshot(app, defer
     app._apply_device_refresh(devices)
     app.device_tree.selection_set("a", "h")
     original_apk, original_hap = Path("original.apk"), Path("original.hap")
-    app.latest_apk, app.latest_hap = original_apk, original_hap
-    app._package_labels = {original_apk: PackageLabel("Original", "resolved", test_only=True)}
+    app.packages["APK"].replace([original_apk, Path("next.apk")])
+    app.packages["HAP"].replace([original_hap, Path("next.hap")])
+    app._apply_package_labels({original_apk: PackageLabel("Original", "resolved", test_only=True)})
     preflight(devices)
     app.install_to_selected()
-    app.apk_name_map = {"next.apk": Path("next.apk")}
-    app.apk_var.set("next.apk")
-    app.on_apk_selected(None)
-    app.hap_name_map = {"next.hap": Path("next.hap")}
-    app.hap_var.set("next.hap")
-    app.on_hap_selected(None)
+    for combo in (app.apk_combo, app.hap_combo):
+        combo.current(1)
+        combo.event_generate("<<ComboboxSelected>>")
     app.device_tree.selection_remove("a", "h")
     app.update()
-    assert app.package_summary_var.get() == "APK next.apk · HAP next.hap"
+    assert (app.apk_combo.get(), app.hap_combo.get()) == ("next.apk", "next.hap")
 
     deferred_tasks.run_all()
     assert install_plans == [([("a", original_apk), ("h", original_hap)], True)]
     assert_selection_labels(app, "已选 2 台：a，h")
-    assert app.package_summary_var.get() == "APK next.apk · HAP next.hap"
+    assert app.packages["APK"].selected == Path("next.apk")
+    assert app.packages["HAP"].selected == Path("next.hap")
 
 
 def test_default_and_desktop_layout_keep_install_fixed_and_log_reachable(app):
@@ -141,8 +143,9 @@ def test_default_and_desktop_layout_keep_install_fixed_and_log_reachable(app):
         DeviceInfo("a", "android", "device"), DeviceInfo("h", "harmony", "device")
     ])
     app.device_tree.selection_set("a", "h")
-    app.latest_apk, app.latest_hap = Path("demo.apk"), Path("demo.hap")
-    app._update_package_summary()
+    app.packages["APK"].replace([Path("demo.apk")])
+    app.packages["HAP"].replace([Path("demo.hap")])
+    app._render_packages()
     for geometry in ("500x600", "800x700"):
         app.geometry(geometry)
         app.update()

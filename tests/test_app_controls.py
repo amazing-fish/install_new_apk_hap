@@ -42,9 +42,9 @@ def test_refresh_state_controls_both_refresh_entry_points() -> None:
     assert app.scan_button.settings["state"] == main.tk.NORMAL
 
 
-def test_threadsafe_log_captures_timestamp_before_tk_callback(monkeypatch) -> None:
+def test_threadsafe_log_captures_timestamp_before_ui_delivery(monkeypatch) -> None:
     app = object.__new__(main.App)
-    scheduled_callbacks = []
+    app.inbox = main.Inbox()
     appended_entries = []
     worker_thread = object()
     main_thread = object()
@@ -54,9 +54,6 @@ def test_threadsafe_log_captures_timestamp_before_tk_callback(monkeypatch) -> No
         def now(cls, tz=None):
             return cls(2026, 7, 28, 20, 35, 9)
 
-    app.after = lambda delay, callback, *args: scheduled_callbacks.append(
-        (delay, callback, args)
-    )
     app._append_log_entry = lambda timestamp, message: appended_entries.append(
         (timestamp, message)
     )
@@ -65,14 +62,11 @@ def test_threadsafe_log_captures_timestamp_before_tk_callback(monkeypatch) -> No
     monkeypatch.setattr(main.threading, "main_thread", lambda: main_thread)
 
     main.App._log_threadsafe(app, "Harmony 开始执行命令")
-
+    # Delivered later, on the UI thread; the time is when it was logged.
+    monkeypatch.setattr(main, "datetime", datetime)
     assert appended_entries == []
-    assert len(scheduled_callbacks) == 1
-    delay, callback, args = scheduled_callbacks[0]
-    assert delay == 0
-    assert args == ("20:35:09", "Harmony 开始执行命令")
 
-    callback(*args)
+    app.inbox.drain()
     assert appended_entries == [
         ("20:35:09", "Harmony 开始执行命令"),
     ]

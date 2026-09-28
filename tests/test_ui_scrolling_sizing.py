@@ -60,14 +60,11 @@ def test_package_wheel_never_changes_selection_or_page(app, attr, state, sequenc
 def test_package_popup_still_scrolls_and_selects_with_keyboard(app, attr):
     show(app)
     combo = getattr(app, attr)
-    names = [f'package-{index}.apk' for index in range(30)]
+    kind = 'APK' if attr == 'apk_combo' else 'HAP'
+    names = [f'package-{index}.{kind.lower()}' for index in range(30)]
     # The application callback must still resolve a deliberate selection.
-    mapping = {name: Path(name) for name in names}
-    if attr == 'apk_combo':
-        app.apk_name_map = mapping
-    else:
-        app.hap_name_map = mapping
-    combo.configure(values=names, state='readonly')
+    app.packages[kind].replace([Path(name) for name in names])
+    app._render_packages()
     combo.current(1)
     combo.focus_force()
     app.update()
@@ -86,6 +83,7 @@ def test_package_popup_still_scrolls_and_selects_with_keyboard(app, attr):
         app.tk.call('event', 'generate', listbox, '<Return>')
         app.update()
         assert combo.get() == names[-1]
+        assert app.packages[kind].selected == Path(names[-1])
     finally:
         app.tk.call('ttk::combobox::Unpost', str(combo))
 

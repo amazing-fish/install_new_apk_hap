@@ -16,7 +16,7 @@ def test_enter_scans_typed_directory_and_remembers_it(app, tmp_path):
     (tmp_path / 'demo.apk').touch()
     app.folder_var.set(f'  {tmp_path}  ')
     press_enter(app)
-    assert app.latest_apk == tmp_path / 'demo.apk'
+    assert app.packages['APK'].selected == tmp_path / 'demo.apk'
     assert app.config_manager.data['last_scan_dir'] == str(tmp_path)
     log = app.log_text.get('1.0', 'end')
     assert f'已选择安装包目录: {tmp_path}' in log

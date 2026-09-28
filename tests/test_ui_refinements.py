@@ -101,7 +101,7 @@ def test_refresh_error_recovery_and_log_clear_keep_visible_results(app, tmp_path
     def broken_preflight(cancel=None):
         raise RuntimeError('preinstall probe failed')
     monkeypatch.setattr(main, 'detect_devices', broken_preflight)
-    app.latest_apk = tmp_path / 'demo.apk'
+    app.packages['APK'].replace([tmp_path / 'demo.apk'])
     app.install_to_selected()
     assert app.install_status_var.get() == '安装异常' and not app.tasks.busy
     failed = app.log_text.get('1.0', 'end')
@@ -165,11 +165,11 @@ def test_scan_changes_and_failures_remain_visible(app, tmp_path, monkeypatch):
     os.utime(newer, (200, 200))
     app.folder_var.set(str(tmp_path))
     app.scan_latest_packages()
-    app.apk_var.set('older.apk')
-    app.on_apk_selected(None)
+    app.apk_combo.current(1)  # older.apk
+    app.on_package_selected('APK')
     app.clear_log()
     app.scan_latest_packages()
-    assert app.latest_apk == newer
+    assert app.packages['APK'].selected == newer
     assert 'newer.apk' in app.log_text.get('1.0', 'end')
     baseline = app.log_text.get('1.0', 'end')
     app.scan_latest_packages()
@@ -177,7 +177,7 @@ def test_scan_changes_and_failures_remain_visible(app, tmp_path, monkeypatch):
     def denied(_directory):
         raise PermissionError('scan denied')
     with monkeypatch.context() as patch:
-        patch.setattr(main, 'find_latest_packages', denied)
+        patch.setattr(main, 'find_packages', denied)
         patch.setattr(main.messagebox, 'showwarning', lambda *args: None)
         for _ in range(2):
             app.scan_latest_packages()

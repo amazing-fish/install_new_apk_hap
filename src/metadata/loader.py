@@ -1,8 +1,9 @@
 """One coalescing metadata worker. No Tk objects cross the thread boundary."""
 from collections import OrderedDict
+from functools import partial
 from pathlib import Path
-import queue
 import threading
+from typing import Callable
 
 from infra.tools import resolve_metadata_tools
 from metadata import PackageLabel, read_package_label
@@ -14,18 +15,24 @@ def file_fingerprint(path: Path) -> tuple:
 
 
 class PackageLabelLoader:
-    def __init__(self):
-        self.results = queue.Queue(maxsize=1)
+    """Only the latest request is read; a superseded one is dropped unread.
+
+    Results reach `on_done(generation, labels, fingerprints)` through `post`,
+    which is called on the worker thread and must be thread-safe.
+    """
+
+    def __init__(self, post: Callable[[Callable[[], None]], None]):
+        self.post = post
         self._condition = threading.Condition()
         self._generation = 0
         self._pending = None
         self._closed = False
         self._thread = None
 
-    def submit(self, paths: list[Path]) -> int:
+    def submit(self, paths: list[Path], on_done: Callable[[int, dict, dict], None]) -> int:
         with self._condition:
             self._generation += 1
-            self._pending = (self._generation, tuple(paths))
+            self._pending = (self._generation, tuple(paths), on_done)
             if self._thread is None:
                 self._thread = threading.Thread(target=self._work, args=(), daemon=True)
                 self._thread.start()
@@ -38,11 +45,6 @@ class PackageLabelLoader:
             self._pending = None
             self._condition.notify()
 
-    def cancel(self):
-        with self._condition:
-            self._generation += 1
-            self._pending = None
-
     def _work(self):
         cache = OrderedDict()
         while True:
@@ -50,7 +52,7 @@ class PackageLabelLoader:
                 self._condition.wait_for(lambda: self._pending is not None or self._closed)
                 if self._closed:
                     return
-                generation, paths = self._pending
+                generation, paths, on_done = self._pending
                 self._pending = None
             labels, fingerprints = {}, {}
             try:
@@ -91,8 +93,6 @@ class PackageLabelLoader:
                     return
                 if generation != self._generation:
                     continue
-                try:
-                    self.results.get_nowait()
-                except queue.Empty:
-                    pass
-                self.results.put_nowait((generation, labels, fingerprints))
+            # Outside the lock: `post` may run on_done synchronously. A request
+            # submitted meanwhile is filtered by the receiver's own generation.
+            self.post(partial(on_done, generation, labels, fingerprints))

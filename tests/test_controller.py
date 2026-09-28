@@ -1,14 +1,15 @@
 """Tk-free task scheduling and single-device rules."""
 import subprocess
 import threading
+import time
 from pathlib import Path
 
 import pytest
 
 import main
-from controller import InstallOutcome, TaskRunner, build_install_plan, resolve_target, run_install_plan
+from controller import Inbox, InstallOutcome, TaskRunner, build_install_plan, resolve_target, run_install_plan
 from infra.tools import HdcError
-from platforms import DeviceInfo
+from platforms import DeviceDetectionResult, DeviceInfo
 from platforms.base import CollectResult, InstallResult
 
 # The app fixture stubs refresh_devices out; keep the real one for refresh tests.
@@ -99,6 +100,33 @@ def test_background_work_does_not_take_the_slot(runner):
     assert results == ['devices']
 
 
+def test_inbox_runs_posts_from_any_thread_only_on_drain_and_in_order():
+    inbox = Inbox()
+    seen = []
+    worker = threading.Thread(target=lambda: [inbox.post(lambda i=i: seen.append(i)) for i in range(3)])
+    worker.start()
+    worker.join()
+    assert seen == []  # nothing runs on the posting thread
+    inbox.drain()
+    assert seen == [0, 1, 2]
+
+
+def test_inbox_raising_callback_leaves_the_rest_queued():
+    inbox = Inbox()
+    seen = []
+
+    def boom():
+        raise RuntimeError('bug in callback')
+
+    for callback in (lambda: seen.append('a'), boom, lambda: seen.append('b')):
+        inbox.post(callback)
+    with pytest.raises(RuntimeError):
+        inbox.drain()
+    assert seen == ['a']
+    inbox.drain()
+    assert seen == ['a', 'b']
+
+
 @pytest.mark.parametrize('selection,devices,auto_select,expected', [
     (('h',), [ANDROID, HARMONY], True, HARMONY),
     ((), [ANDROID], True, ANDROID),
@@ -153,7 +181,8 @@ def test_refresh_during_install_cannot_change_the_frozen_targets(app, monkeypatc
     devices = [ANDROID, HARMONY]
     app._apply_device_refresh(devices)
     app.device_tree.selection_set('a', 'h')
-    app.latest_apk, app.latest_hap = Path('a.apk'), Path('h.hap')
+    app.packages['APK'].replace([Path('a.apk')])
+    app.packages['HAP'].replace([Path('h.hap')])
     preflight(devices)
     installed = []
     for key in ('android', 'harmony'):
@@ -206,7 +235,7 @@ def test_udid_probe_can_be_cancelled_without_an_error_dialog(app, monkeypatch, d
 def test_stop_during_preflight_reaches_the_device_probes(app, monkeypatch, fake_process, deferred_tasks):
     monkeypatch.setattr(main.messagebox, 'showwarning', lambda *args: None)  # fail, never block
     app._apply_device_refresh([ANDROID])
-    app.latest_apk = Path('a.apk')
+    app.packages['APK'].replace([Path('a.apk')])
     fake_process.handler = lambda command, **kwargs: (-1, '', '', {'cancelled': kwargs['cancel'].is_set()})
     app.install_to_selected()
     app.install_to_selected()  # stop while the probes would still be running
@@ -254,3 +283,37 @@ def test_cancelled_udid_probe_is_reported_as_an_hdc_error(fake_process, hdc_exec
     fake_process.handler = lambda command, **kwargs: (-1, '', '', {'cancelled': True})
     with pytest.raises(HdcError, match='中止'):
         main.DRIVERS['harmony'].udid('h', cancel=cancel)
+
+
+def test_results_reach_the_ui_before_the_event_loop_runs(monkeypatch, tmp_path):
+    """#88: with the real runner, the startup refresh is delivered while the UI
+    thread is not yet in mainloop (it only pumps here, as during a slow startup
+    scan). A Tk call from the worker would raise "main thread is not in main loop"."""
+    monkeypatch.setattr(main.App, '_get_config_path', lambda self: tmp_path / 'config.json')
+    monkeypatch.setattr(main, 'detect_devices', lambda cancel=None: DeviceDetectionResult([ANDROID]))
+    window = main.App()  # real TaskRunner: refresh_devices runs on a worker thread
+    errors = []
+    window.report_callback_exception = lambda *error: errors.append(error)
+    try:
+        window.withdraw()
+
+        def boom():
+            raise RuntimeError('bug in a callback')
+
+        worker = threading.Thread(target=lambda: window._log_threadsafe('from a worker thread'))
+        worker.start()
+        worker.join()
+        window.inbox.post(boom)
+        window.inbox.post(lambda: window.log('after the failing callback'))
+        deadline = time.monotonic() + 5
+        while 'after the failing callback' not in window.log_text.get('1.0', 'end') or window.refreshing:
+            assert time.monotonic() < deadline, 'background results were never delivered'
+            window.update()
+            time.sleep(0.01)
+        assert window.device_tree.get_children() == ('a',)
+        assert window.refresh_button.cget('text') == '刷新设备'
+        assert 'from a worker thread' in window.log_text.get('1.0', 'end')
+        # A failing callback is reported and does not stop later deliveries.
+        assert len(errors) == 1
+    finally:
+        window.destroy()

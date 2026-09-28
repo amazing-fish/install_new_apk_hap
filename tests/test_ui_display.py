@@ -1,15 +1,12 @@
 import sys
 from pathlib import Path
 
-import pytest
-
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from platforms import DeviceInfo
 from ui_display import (
     format_device_summary,
     format_device_tree_values,
-    format_package_summary,
     format_selected_device_summary,
 )
 
@@ -37,26 +34,4 @@ def test_selection_summary_uses_only_current_unique_ids_and_name_fallback():
     assert format_selected_device_summary([], devices, names) == "未选择设备"
     assert format_selected_device_summary(["b", "a", "gone", "a"], devices, names) == (
         "已选 2 台：b，Pixel"
-    )
-
-
-@pytest.mark.parametrize("apk,hap,expected", [
-    (None, None, "未找到可安装包"),
-    (Path("包/demo.apk"), None, "APK demo.apk"),
-    (None, Path("包/测试.hap"), "HAP 测试.hap"),
-    (Path("a.apk"), Path("b.hap"), "APK a.apk · HAP b.hap"),
-])
-def test_package_summary_uses_selected_filenames(apk, hap, expected):
-    assert format_package_summary(apk, hap) == expected
-
-
-def test_package_summary_includes_name_and_version_metadata():
-    assert format_package_summary(
-        Path("demo.apk"), Path("demo.hap"),
-        "Android Demo", "Harmony Demo",
-        "1.3.08.107", 142,
-        "2.0.0", 200,
-    ) == (
-        "APK Android Demo · 1.3.08.107 (142)（demo.apk） · "
-        "HAP Harmony Demo · 2.0.0 (200)（demo.hap）"
     )

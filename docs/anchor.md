@@ -6,10 +6,10 @@
 
 1. `App` 初始化配置、状态和 UI。
 2. 设备刷新分别调用 ADB/HDC；Harmony 探测失败时保留已检测到的 Android 设备并明确记录原因。
-3. 安装包扫描按文件修改时间排序，APK/HAP 各自默认选择最新候选。
-4. 包元数据由单个后台 worker 异步读取；结果必须匹配当前请求、目录和文件指纹才回写 UI。
+3. 安装包扫描按文件修改时间排序，APK/HAP 各自默认选择最新候选。每种包一个 `packages.PackageSlot`（候选、元数据、选中索引）；下拉框只渲染 slot，选择按索引回报，显示文本从不用来反查文件。扫描失败保留上次结果。
+4. 包元数据由单个后台 worker 异步读取；结果必须属于最近一次扫描且文件指纹未变才回写 UI，回写只改显示文本，不改选择。
 5. 点击安装后冻结设备选择与 APK/HAP 路径，再执行一次设备 preflight；仍在线的原选择被恢复，未选择且只剩一台设备时自动选择该设备。preflight 通过后在主线程冻结安装计划（设备、驱动、包、显示名），安装期间刷新设备不影响目标。
-6. 后台任务只经 `controller.TaskRunner` 调度，结果通过 Tk 主线程回写。安装、UDID、崩溃日志、APP 日志共用一个设备任务槽：同一时刻只有一个，均可由底部主按钮中止；设备刷新不占用该槽，最新结果胜出。
+6. 后台结果只有一种回到主线程的方式：worker 把回调放进 `controller.Inbox`（线程安全队列），主线程每 30 ms 取出执行。worker 线程不调用任何 Tk 接口（含 `after`）：主线程尚未进入 `mainloop` 时，跨线程 Tk 调用约 1 秒后抛错，结果会丢失。设备任务经 `controller.TaskRunner` 调度：安装、UDID、崩溃日志、APP 日志共用一个设备任务槽，同一时刻只有一个，均可由底部主按钮中止；设备刷新不占用该槽，最新结果胜出。
 7. 单设备操作（UDID、崩溃日志、APP 日志、复制设备码、保存名称）与按钮可用性统一用 `controller.resolve_target`：选中一台用该台；未选且只有一台、且上次探测未失败时用那一台。
 
 ## APK/HAP 元数据
@@ -84,14 +84,14 @@ Windows 配置文件：`%APPDATA%/install_new_apk_hap/app_config.json`。
 ## 模块职责
 
 - `src/main.py`：Tk 界面状态与交互编排，把结果渲染为日志、提示和按钮状态。
-- `src/controller.py`：无 Tk 依赖的 `TaskRunner`（单任务槽、可取消、可注入同步执行）、`resolve_target`、安装计划冻结与逐台执行（`build_install_plan` / `run_install_plan`）。
+- `src/controller.py`：无 Tk 依赖的 `Inbox`（唯一的主线程回写通道）、`TaskRunner`（单任务槽、可取消、可注入同步执行）、`resolve_target`、安装计划冻结与逐台执行（`build_install_plan` / `run_install_plan`）。
 - `src/ui_layout.py`：一次性 UI 装配与事件绑定，不读取业务配置。
 - `src/ui_styles.py`：窗口、列宽、行高和视觉常量。
 - `src/ui_widgets.py`：页面滚动、自动隐藏滚动条和操作行布局。
-- `src/ui_display.py`：无 Tk 依赖的显示格式化。
+- `src/ui_display.py`：无 Tk 依赖的设备显示格式化。
 - `src/config_manager.py`：最小配置持久化。
 - `src/platforms/`：平台驱动。`base.py` 定义 `DeviceInfo`、`InstallResult`、`CollectResult` 与 `PlatformDriver`；`android.py`（adb）、`harmony.py`（hdc）各实现探测、安装命令、崩溃日志，Harmony 另有 UDID 与 APP 日志；`__init__.py` 提供 `DRIVERS`、`driver_for`、`detect_devices`。
-- `src/packages.py`：候选包扫描和 mtime 排序。
+- `src/packages.py`：无 Tk 依赖的包状态：候选扫描与 mtime 排序（`find_packages`）、`PackageSlot`、`-t` 规则（`apk_allow_test`）。
 - `src/metadata/`：APK/HAP 元数据读取。`guard.py` 是读取边界（ZIP/资源大小、工具超时与输出上限、不可信文本过滤），`apk.py`、`hap.py` 只写格式规则且只经 `guard` 读取；`__init__.py` 的 `read_package_label` 按后缀分派并把预期失败映射为显示状态；`display.py` 生成下拉框文本；`loader.py` 是异步 worker、缓存和文件指纹校验。
 - `src/cli.py`：无 GUI 诊断（包元数据报告、许可导出、主题报告）。
 - `src/infra/process.py`：唯一的外部命令执行入口。

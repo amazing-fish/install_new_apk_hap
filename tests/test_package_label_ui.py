@@ -6,6 +6,7 @@ from infra.tools import MetadataTools
 from metadata import PackageLabel
 from metadata import loader as loader_module
 from metadata.loader import file_fingerprint
+from packages import apk_allow_test
 
 
 def pump_until(app, predicate):
@@ -41,44 +42,40 @@ def test_background_label_update_preserves_choice_and_logs(app, tmp_path, monkey
         app.after(0, lambda: events.append('responsive'))
         app.update()
         assert events == ['responsive']
-        app.apk_combo.current(1)
-        app.on_apk_selected(None)
+        app.apk_combo.current(1)  # newest first: index 1 is old.apk
+        app.on_package_selected('APK')
         log_before = app.log_text.get('1.0', 'end')
         release.set()
-        pump_until(app, lambda: '同名应用' in app.apk_var.get())
-        assert app.latest_apk == paths[0]
-        assert app.apk_name_map[app.apk_var.get()] == paths[0]
-        assert app.apk_var.get() == '同名应用 · 1.2.3 (123)（old.apk）'
-        assert app.package_summary_var.get() == 'APK 同名应用 · 1.2.3 (123)（old.apk）'
+        # Delivered through the inbox by the real poll, not by the test.
+        pump_until(app, lambda: '同名应用' in app.apk_combo.get())
+        # Both files now share a display name; the index still means old.apk.
+        assert app.packages['APK'].selected == paths[0]
+        assert app.apk_combo.current() == 1
+        assert app.apk_combo.get() == '同名应用 · 1.2.3 (123)（old.apk）'
         assert app.log_text.get('1.0', 'end') == log_before
         assert all(t != threading.get_ident() for t in worker_threads)
     finally:
         release.set()
 
 
-def test_stale_generation_empty_directory_and_changed_file_are_ignored(app, tmp_path):
+def test_stale_generation_and_changed_file_are_ignored(app, tmp_path):
     path = tmp_path/'one.apk'; path.touch()
-    # Control delivery to prove attribution independently of thread timing.
-    app._package_candidates = ([path], [])
-    app.latest_apk = path
-    app._package_label_request = 22
-    app._package_label_folder = str(tmp_path)
     app.folder_var.set(str(tmp_path))
-    app.apk_var.set(path.name)
-    q = app._package_label_loader.results
-    q.put((21, {path: PackageLabel('Old directory', 'resolved')}, {path: file_fingerprint(path)}))
-    app._poll_package_labels()
-    assert app.apk_var.get() == path.name
-    app.after_cancel(app._package_label_poll); app._package_label_poll = None
+    app.scan_latest_packages()
+    # Deliver by hand to prove attribution independently of thread timing.
+    current = app._package_label_request
+    app._on_package_labels(current - 1, {path: PackageLabel('Old scan', 'resolved')},
+                           {path: file_fingerprint(path)})
+    assert app.apk_combo.get() == path.name
     fingerprint = file_fingerprint(path)
     path.write_bytes(b'new content')
-    q.put((22, {path: PackageLabel('Old bytes', 'resolved')}, {path: fingerprint}))
-    app._poll_package_labels()
-    assert app.apk_var.get() == path.name
+    app._on_package_labels(current, {path: PackageLabel('Old bytes', 'resolved')}, {path: fingerprint})
+    assert app.apk_combo.get() == path.name
+    app._on_package_labels(current, {path: PackageLabel('Current', 'resolved')}, {path: file_fingerprint(path)})
+    assert app.apk_combo.get() == 'Current（one.apk）'
     empty = tmp_path/'empty'; empty.mkdir()
     app.folder_var.set(str(empty)); app.scan_latest_packages()
-    assert app.latest_apk is None and app.apk_var.get() == '未找到'
-    assert app.package_summary_var.get() == '未找到可安装包'
+    assert app.packages['APK'].selected is None and app.apk_combo.get() == '未找到'
 
 
 def test_metadata_apply_does_not_mutate_install_click_snapshot(app, tmp_path, deferred_tasks, preflight,
@@ -87,8 +84,7 @@ def test_metadata_apply_does_not_mutate_install_click_snapshot(app, tmp_path, de
     path = tmp_path/'app.apk'; path.touch()
     devices = [DeviceInfo('a', 'android', 'device')]
     app._apply_device_refresh(devices); app.device_tree.selection_set('a')
-    app.latest_apk = path
-    app._package_candidates = ([path], [])
+    app.packages['APK'].replace([path])
     preflight(devices)
     # No metadata at click time => safe permissive snapshot.
     app.install_to_selected()
@@ -96,4 +92,4 @@ def test_metadata_apply_does_not_mutate_install_click_snapshot(app, tmp_path, de
     app._apply_package_labels({path: PackageLabel('Renamed display', 'resolved', test_only=False)})
     deferred_tasks.run_all()
     assert install_plans == [([('a', path)], True)]
-    assert app._apk_allow_test(path) is False
+    assert apk_allow_test(app.packages['APK']) is False

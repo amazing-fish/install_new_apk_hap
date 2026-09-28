@@ -1,32 +1,32 @@
 import os
-import queue
 import threading
 import time
 import tkinter as tk
 from datetime import datetime
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox
 from typing import Dict, Iterable, List, Optional, Set, Tuple
 
 from config_manager import ConfigManager
 from controller import (
-    Task, TaskRunner, build_install_plan, format_command_for_log, resolve_target, run_install_plan,
+    Inbox, Task, TaskRunner, build_install_plan, format_command_for_log, resolve_target, run_install_plan,
 )
 from platforms import DRIVERS, DeviceInfo, detect_devices, driver_for
 from platforms.base import CollectResult, PlatformDriver
-from metadata.display import package_display_labels
 from metadata.loader import PackageLabelLoader, file_fingerprint
-from packages import find_latest_packages
+from packages import PACKAGE_KINDS, PackageSlot, apk_allow_test, find_packages
 from ui_display import (
     format_device_ids_for_log,
     format_device_summary,
     format_device_tree_values,
-    format_package_summary,
     format_selected_device_summary,
     get_device_display_name,
 )
 from ui_layout import build_ui
 from ui_styles import DEVICE_LIST_MIN_ROWS, DEVICE_LIST_MAX_ROWS, configure_window, fit_device_columns, fit_initial_window
+
+# How often the UI thread collects background results; well below perception.
+INBOX_POLL_MS = 30
 
 
 def reorder_devices_for_refresh(
@@ -46,39 +46,34 @@ class App(tk.Tk):
 
         self.config_manager = ConfigManager(self._get_config_path())
         self.devices: List[DeviceInfo] = []
-        self.latest_apk: Optional[Path] = None
-        self.latest_hap: Optional[Path] = None
-        self.apk_name_map: Dict[str, Path] = {}
-        self.hap_name_map: Dict[str, Path] = {}
+        self.packages: Dict[str, PackageSlot] = {kind: PackageSlot() for kind in PACKAGE_KINDS}
         self.refreshing = False
         # A failed probe means the "only" device may not be the only one.
         self.last_probe_failed = False
+        # Every background result reaches this thread through the inbox.
+        self.inbox = Inbox()
+        self._inbox_poll = None
         # One device task (install / UDID / logs) at a time; each can be cancelled.
-        self.tasks = TaskRunner(post=lambda callback: self.after(0, callback),
-                                on_change=self._on_task_change)
+        self.tasks = TaskRunner(post=self.inbox.post, on_change=self._on_task_change)
         self.name_var = tk.StringVar(master=self)
         self.folder_var = tk.StringVar(master=self)
-        self.apk_var = tk.StringVar(master=self, value="未找到")
-        self.hap_var = tk.StringVar(master=self, value="未找到")
         self.install_status_var = tk.StringVar(master=self, value="就绪")
         self.device_summary_var = tk.StringVar(master=self, value=format_device_summary(self.devices))
         self.selected_device_summary_var = tk.StringVar(master=self, value="未选择设备")
-        self.package_summary_var = tk.StringVar(master=self, value=format_package_summary(None, None))
         self.device_ids_before_last_refresh: Optional[Set[str]] = None
         self._latest_refresh_request_id = 0
         self._last_device_refresh_snapshot = None
         self._last_package_scan_snapshot = None
-        self._package_label_loader = PackageLabelLoader()
+        self._package_label_loader = PackageLabelLoader(post=self.inbox.post)
         self._package_label_request = 0
-        self._package_label_poll = None
-        self._package_label_folder = ""
-        self._package_candidates = ([], [])
-        self._package_labels = {}
-        self.bind('<Destroy>', self._close_package_labels, add='+')
+        self.bind('<Destroy>', self._on_destroy, add='+')
 
         build_ui(self)
+        self.package_combos = {"APK": self.apk_combo, "HAP": self.hap_combo}
+        self._render_packages()
         fit_initial_window(self, self.device_tree)
         self._update_device_actions()
+        self._poll_inbox()
         self.refresh_devices()
         self.load_last_scan_dir()
 
@@ -365,17 +360,11 @@ class App(tk.Tk):
         else:
             self.log("未找到上次扫描目录")
 
-    def _apk_allow_test(self, apk_path: Optional[Path]) -> bool:
-        """Metadata may optimize away -t, but can never be required to install."""
-        if not apk_path:
-            return False
-        label = self._package_labels.get(apk_path)
-        return not (label is not None and label.test_only is False)
-
     def scan_latest_packages(self) -> bool:
-        """Scan the folder field; False when it is empty, missing or unreadable."""
-        self._package_label_loader.cancel()
-        self._package_label_request = 0
+        """Scan the folder field; False when it is empty, missing or unreadable.
+
+        A failed scan keeps the previous packages, which are still real files.
+        """
         folder = self.folder_var.get().strip()
         if not folder:
             self._last_package_scan_snapshot = None
@@ -389,63 +378,37 @@ class App(tk.Tk):
             self.log(f"扫描失败：目录不存在或不是目录 {directory}")
             return False
         try:
-            package_info = find_latest_packages(directory)
+            found = find_packages(directory)
             files = []
-            for path in package_info.apk_candidates + package_info.hap_candidates:
-                stat = path.stat()
-                files.append((path, stat.st_size, stat.st_mtime_ns))
+            for kind in PACKAGE_KINDS:
+                for path in found[kind]:
+                    stat = path.stat()
+                    files.append((path, stat.st_size, stat.st_mtime_ns))
             snapshot = (directory.resolve(), tuple(files))
         except OSError as error:
             self._last_package_scan_snapshot = None
             self.log(f"扫描安装包失败：{directory}，{error}")
             messagebox.showwarning("提示", f"扫描安装包失败：{error}")
             return False
-        previous_selection = (self.latest_apk, self.latest_hap)
-        self._package_labels = {}
-        self.apk_name_map = {path.name: path for path in package_info.apk_candidates}
-        self.hap_name_map = {path.name: path for path in package_info.hap_candidates}
-        self.latest_apk = self._update_package_options(
-            self.apk_combo, self.apk_var, package_info.apk_candidates
-        )
-        self.latest_hap = self._update_package_options(
-            self.hap_combo, self.hap_var, package_info.hap_candidates
-        )
-        apk_name = self.latest_apk.name if self.latest_apk else "未找到"
-        hap_name = self.latest_hap.name if self.latest_hap else "未找到"
-        self._update_package_summary()
-        selection = (self.latest_apk, self.latest_hap)
+        previous_selection = self._selected_packages()
+        for kind, slot in self.packages.items():
+            slot.replace(found[kind])
+        self._render_packages()
+        selection = self._selected_packages()
         if snapshot != self._last_package_scan_snapshot or selection != previous_selection:
-            self.log(f"安装包扫描完成：{directory} · APK={apk_name}, HAP={hap_name}")
+            names = ", ".join(f"{kind}={path.name if path else '未找到'}" for kind, path in selection.items())
+            self.log(f"安装包扫描完成：{directory} · {names}")
         self._last_package_scan_snapshot = snapshot
-        self._package_candidates = (package_info.apk_candidates, package_info.hap_candidates)
-        self._package_label_folder = folder
         self._package_label_request = self._package_label_loader.submit(
-            package_info.apk_candidates + package_info.hap_candidates
-        )
-        if self._package_label_poll is None:
-            self._package_label_poll = self.after(50, self._poll_package_labels)
+            [path for slot in self.packages.values() for path in slot.candidates], self._on_package_labels)
         return True
 
-    def _close_package_labels(self, event) -> None:
-        if event.widget is self:
-            self._package_label_loader.close()
-            if self._package_label_poll is not None:
-                self.after_cancel(self._package_label_poll)
-                self._package_label_poll = None
+    def _selected_packages(self) -> Dict[str, Optional[Path]]:
+        return {kind: slot.selected for kind, slot in self.packages.items()}
 
-    def _poll_package_labels(self) -> None:
-        self._package_label_poll = None
-        try:
-            generation, labels, fingerprints = self._package_label_loader.results.get_nowait()
-        except queue.Empty:
-            if self._package_label_request:
-                self._package_label_poll = self.after(50, self._poll_package_labels)
-            return
+    def _on_package_labels(self, generation: int, labels, fingerprints) -> None:
+        """Metadata for the latest scan; a file changed since it was read is skipped."""
         if generation != self._package_label_request:
-            if self._package_label_request:
-                self._package_label_poll = self.after(50, self._poll_package_labels)
-            return
-        if self.folder_var.get().strip() != self._package_label_folder:
             return
         current_labels = {}
         for path, label in labels.items():
@@ -457,86 +420,43 @@ class App(tk.Tk):
         self._apply_package_labels(current_labels)
 
     def _apply_package_labels(self, labels) -> None:
-        self._package_labels = labels
-        for paths, combo, var, selected, mapping_name in (
-            (self._package_candidates[0], self.apk_combo, self.apk_var, self.latest_apk, 'apk_name_map'),
-            (self._package_candidates[1], self.hap_combo, self.hap_var, self.latest_hap, 'hap_name_map'),
-        ):
-            mapping = package_display_labels(paths, labels)
-            setattr(self, mapping_name, mapping)
-            if not paths:
+        for slot in self.packages.values():
+            slot.set_labels(labels)
+        self._render_packages()
+
+    def _render_packages(self) -> None:
+        """Show each slot in its dropdown; the slot, not the text, holds the choice."""
+        for kind, slot in self.packages.items():
+            combo = self.package_combos[kind]
+            if not slot.candidates:
+                combo.configure(values=["未找到"], state="disabled")
+                combo.set("未找到")
                 continue
-            combo.configure(values=list(mapping))
-            # A metadata refresh must preserve a choice made while it ran.
-            for display, path in mapping.items():
-                if path == selected:
-                    var.set(display)
-                    break
-        self._update_package_summary()
+            combo.configure(values=slot.display_names(), state="readonly")
+            combo.current(slot.index)
 
-    def _update_package_summary(self) -> None:
-        apk_label = self._package_labels.get(self.latest_apk)
-        hap_label = self._package_labels.get(self.latest_hap)
-        self.package_summary_var.set(format_package_summary(
-            self.latest_apk,
-            self.latest_hap,
-            apk_label.name if apk_label else None,
-            hap_label.name if hap_label else None,
-            apk_label.version_name if apk_label else None,
-            apk_label.version_code if apk_label else None,
-            hap_label.version_name if hap_label else None,
-            hap_label.version_code if hap_label else None,
-        ))
-
-    def _update_package_options(
-        self,
-        combo: ttk.Combobox,
-        var: tk.StringVar,
-        candidates: List[Path],
-    ) -> Optional[Path]:
-        if not candidates:
-            combo.configure(values=["未找到"], state="disabled")
-            var.set("未找到")
-            return None
-        names = [path.name for path in candidates]
-        combo.configure(values=names, state="readonly")
-        var.set(names[0])
-        return candidates[0]
-
-    def on_apk_selected(self, _event: tk.Event) -> None:
-        selected_name = self.apk_var.get()
-        self.latest_apk = self.apk_name_map.get(selected_name)
-        self._update_package_summary()
-
-    def on_hap_selected(self, _event: tk.Event) -> None:
-        selected_name = self.hap_var.get()
-        self.latest_hap = self.hap_name_map.get(selected_name)
-        self._update_package_summary()
+    def on_package_selected(self, kind: str) -> None:
+        self.packages[kind].choose(self.package_combos[kind].current())
 
     def install_to_selected(self) -> None:
         # The primary button doubles as "stop" for whichever device task is running.
         if self.tasks.busy:
             self.cancel_current_task()
             return
-        if not self.latest_apk and not self.latest_hap:
+        packages = self._selected_packages()
+        if not any(packages.values()):
             messagebox.showwarning("提示", "未找到可安装的 APK/HAP")
             self.log("安装失败：未找到可安装的 APK/HAP")
             return
         previous_selection = set(self.device_tree.selection())
-        selected_apk = self.latest_apk
-        selected_hap = self.latest_hap
-        allow_test = self._apk_allow_test(selected_apk)
+        allow_test = apk_allow_test(self.packages["APK"])
         selected_device_text = (
             self._device_labels_for_log(sorted(previous_selection))
             if previous_selection
             else "未选择（单设备时将自动选择）"
         )
-        apk_text = selected_apk.name if selected_apk else "未找到"
-        hap_text = selected_hap.name if selected_hap else "未找到"
-        self.log(
-            "收到安装请求："
-            f"设备={selected_device_text}，APK={apk_text}，HAP={hap_text}"
-        )
+        package_text = "，".join(f"{kind}={path.name if path else '未找到'}" for kind, path in packages.items())
+        self.log(f"收到安装请求：设备={selected_device_text}，{package_text}")
         self.log("开始安装前设备校验")
         task = self.tasks.start("install", "安装", verb="")
 
@@ -548,7 +468,7 @@ class App(tk.Tk):
         self.tasks.run(
             task, preflight,
             lambda result: self._finalize_install(
-                task, result[0], previous_selection, selected_apk, selected_hap, allow_test, result[1]),
+                task, result[0], previous_selection, packages, allow_test, result[1]),
             lambda error: self._apply_install_preparation_error(task, error),
         )
 
@@ -563,8 +483,7 @@ class App(tk.Tk):
         task: Task,
         detection,
         previous_selection: Set[str],
-        selected_apk: Optional[Path],
-        selected_hap: Optional[Path],
+        packages: Dict[str, Optional[Path]],
         allow_test: bool,
         validation_duration_seconds: float = 0.0,
     ) -> None:
@@ -614,8 +533,7 @@ class App(tk.Tk):
                 return
         # Frozen here, on the UI thread: a refresh during the install cannot
         # change which devices get which package.
-        plan = build_install_plan(selection_list, self.devices, {"APK": selected_apk, "HAP": selected_hap},
-                                  self._device_label)
+        plan = build_install_plan(selection_list, self.devices, packages, self._device_label)
         self.tasks.run(
             task, lambda: run_install_plan(plan, allow_test, task.cancel, self._log_threadsafe),
             lambda outcome: self._end_task(task, outcome.status, status=outcome.status),
@@ -688,7 +606,19 @@ class App(tk.Tk):
         if threading.current_thread() is threading.main_thread():
             self._append_log_entry(timestamp, message)
         else:
-            self.after(0, self._append_log_entry, timestamp, message)
+            self.inbox.post(lambda: self._append_log_entry(timestamp, message))
+
+    def _poll_inbox(self) -> None:
+        # Re-arm first: a failing callback must not stop later deliveries.
+        self._inbox_poll = self.after(INBOX_POLL_MS, self._poll_inbox)
+        self.inbox.drain()
+
+    def _on_destroy(self, event) -> None:
+        if event.widget is self:
+            self._package_label_loader.close()
+            if self._inbox_poll is not None:
+                self.after_cancel(self._inbox_poll)
+                self._inbox_poll = None
 
     def fetch_crash_log(self) -> None:
         device = self._device_for_task("崩溃日志", "请选择一个设备")
