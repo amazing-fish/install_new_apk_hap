@@ -964,5 +964,7 @@ if __name__ == "__main__":
     if len(sys.argv) > 1:
         from services.package_metadata_cli import run_cli
         raise SystemExit(run_cli(sys.argv[1:]))
+    from ui_styles import enable_high_dpi
+    enable_high_dpi()
     app = App()
     app.mainloop()
