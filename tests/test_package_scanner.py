@@ -5,7 +5,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from services.package_scanner import find_latest_packages
+from packages import find_latest_packages
 
 
 def create_package(directory: Path, name: str, modified_time: int) -> Path:

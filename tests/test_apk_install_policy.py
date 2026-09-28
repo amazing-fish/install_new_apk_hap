@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from platforms import DeviceInfo
-from services.package_metadata import PackageLabel
+from metadata import PackageLabel
 
 
 def _prepare_apk(app, apk: Path) -> None:

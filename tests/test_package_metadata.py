@@ -8,8 +8,10 @@ import zipfile
 
 import pytest
 
-from services import package_metadata as metadata
-from services.package_metadata import MetadataTools, PackageLabel, package_display_labels, read_package_label
+from infra import tools
+from infra.tools import MetadataTools
+from metadata import PackageLabel, guard, read_package_label
+from metadata.display import package_display_labels
 
 
 FIXTURES = Path(__file__).parent / 'fixtures/package_labels'
@@ -32,7 +34,7 @@ def test_sdk_compiled_resource_fixtures(monkeypatch, suffix, output, tools):
     def run(command):
         commands.append(command)
         return (FIXTURES / output).read_bytes().decode('utf8')
-    monkeypatch.setattr(metadata, '_run_tool', run)
+    monkeypatch.setattr(guard, 'run_tool', run)
     path = FIXTURES / f'compiled.{suffix}'
     result = read_package_label(path, tools)
     assert result.name == 'Demo 默认名称' and result.status == 'resolved'
@@ -51,7 +53,7 @@ def test_apk_reads_package_version_and_testonly_from_same_badging_call(monkeypat
     def run(command):
         commands.append(command)
         return output
-    monkeypatch.setattr(metadata, '_run_tool', run)
+    monkeypatch.setattr(guard, 'run_tool', run)
     path = FIXTURES / 'compiled.apk'
     result = read_package_label(path, MetadataTools(aapt2='aapt2'))
     assert result == PackageLabel(
@@ -62,7 +64,7 @@ def test_apk_reads_package_version_and_testonly_from_same_badging_call(monkeypat
 
 
 def test_apk_without_testonly_badging_is_not_a_test_package(monkeypatch):
-    monkeypatch.setattr(metadata, '_run_tool', lambda command: (
+    monkeypatch.setattr(guard, 'run_tool', lambda command: (
         "package: name='com.example.release' versionCode='1' versionName='1.0'\n"
         "application-label:'Release'\n"
     ))
@@ -114,7 +116,7 @@ def test_hap_keeps_version_when_resource_label_tool_is_unavailable(tmp_path):
 
 @pytest.mark.parametrize('name', ['@Home', '$Launch', "Sam\'s Tool"])
 def test_resolved_aapt_label_is_text_not_a_resource_reference(monkeypatch, name):
-    monkeypatch.setattr(metadata, '_run_tool', lambda command: f"application-label:'{name}'\r\n")
+    monkeypatch.setattr(guard, 'run_tool', lambda command: f"application-label:'{name}'\r\n")
     result = read_package_label(FIXTURES/'compiled.apk', MetadataTools(aapt2='aapt2'))
     assert result.name == name and result.status == 'resolved'
 
@@ -127,7 +129,7 @@ def test_untrusted_label_controls_cannot_reorder_or_hide_filename(monkeypatch, t
     assert result.status == 'invalid' and result.name is None
     display = next(iter(package_display_labels([path], {path: result})))
     assert control not in display and path.name in display
-    monkeypatch.setattr(metadata, '_run_tool', lambda command: f"application-label:'{name}'\r\n")
+    monkeypatch.setattr(guard, 'run_tool', lambda command: f"application-label:'{name}'\r\n")
     apk = read_package_label(FIXTURES/'compiled.apk', MetadataTools(aapt2='aapt2'))
     assert apk.name is None and apk.status in ('invalid', 'missing')
 
@@ -170,7 +172,7 @@ def test_fa_uses_exact_main_ability_not_first_name(tmp_path):
 ])
 def test_hap_default_resource_selection_is_explicit(monkeypatch, tmp_path, entries, expected):
     path = hap(tmp_path, {'app': {'label': '$string:app_name', 'labelId': 123}})
-    monkeypatch.setattr(metadata, '_run_tool', lambda command: json.dumps({'resource': [
+    monkeypatch.setattr(guard, 'run_tool', lambda command: json.dumps({'resource': [
         {'id': 123, 'name': 'app_name', 'type': 'string', 'entryValues': entries},
         {'id': 456, 'name': 'other', 'type': 'string', 'entryValues': [{'value': 'Wrong'}]},
     ]}))
@@ -181,15 +183,15 @@ def test_hap_default_resource_selection_is_explicit(monkeypatch, tmp_path, entri
 
 def test_hap_reference_id_must_match(monkeypatch, tmp_path):
     path = hap(tmp_path, {'app': {'label': '$string:app_name', 'labelId': 999}})
-    monkeypatch.setattr(metadata, '_run_tool', lambda command: (FIXTURES/'restool-dump.json').read_text(encoding='utf8'))
+    monkeypatch.setattr(guard, 'run_tool', lambda command: (FIXTURES/'restool-dump.json').read_text(encoding='utf8'))
     assert read_package_label(path, MetadataTools(restool='restool')).status == 'unresolved'
 
 
 @pytest.mark.parametrize('suffix,tool', [('hap', 'restool'), ('apk', 'aapt2')])
 def test_sdk_rejection_has_a_distinct_display_state(monkeypatch, suffix, tool):
     def reject(command):
-        raise metadata.MetadataToolError('tool failed')
-    monkeypatch.setattr(metadata, '_run_tool', reject)
+        raise guard.MetadataToolError('tool failed')
+    monkeypatch.setattr(guard, 'run_tool', reject)
     path = FIXTURES / f'compiled.{suffix}'
     result = read_package_label(path, MetadataTools(**{tool: tool}))
     assert (result.status, result.source) == ('tool_failed', tool)
@@ -205,7 +207,7 @@ def test_missing_tool_corruption_unsupported_and_size_limit(tmp_path):
     path = hap(tmp_path, {'name': 'Ignored'}, 'pack.info')
     assert read_package_label(path, MetadataTools()).status == 'unsupported'
     with zipfile.ZipFile(path, 'w', compression=zipfile.ZIP_DEFLATED) as archive:
-        archive.writestr('module.json', ' ' * (metadata.MAX_METADATA_BYTES + 1))
+        archive.writestr('module.json', ' ' * (guard.MAX_METADATA_BYTES + 1))
     assert read_package_label(path, MetadataTools()).status == 'limited'
 
 
@@ -235,7 +237,7 @@ def test_zip64_directory_cannot_bypass_legacy_size_check(tmp_path, monkeypatch, 
     # Python follows ZIP64 despite the small, non-sentinel legacy values.
     with zipfile.ZipFile(path) as archive:
         assert len(archive.namelist()) == 2
-    monkeypatch.setattr(metadata, 'MAX_METADATA_BYTES', size - 1)
+    monkeypatch.setattr(guard, 'MAX_METADATA_BYTES', size - 1)
     assert read_package_label(path, MetadataTools()).status == 'limited'
 
 
@@ -257,10 +259,10 @@ def test_many_apk_entries_are_bounded_by_directory_bytes(tmp_path, monkeypatch, 
     def run(command):
         commands.append(command)
         return "application-label:'Many files'\n"
-    monkeypatch.setattr(metadata, '_run_tool', run)
+    monkeypatch.setattr(guard, 'run_tool', run)
     if long_names:
         # The directory byte budget must stop ZipFile's eager allocation.
-        monkeypatch.setattr(metadata.zipfile, 'ZipFile', lambda *a, **kw: pytest.fail('oversized directory opened'))
+        monkeypatch.setattr(zipfile, 'ZipFile', lambda *a, **kw: pytest.fail('oversized directory opened'))
     result = read_package_label(path, MetadataTools(aapt2='aapt2'))
     assert result.status == ('limited' if long_names else 'resolved')
     assert result.name == (None if long_names else 'Many files')
@@ -286,7 +288,7 @@ def test_display_includes_resolved_name_and_version():
 
 
 def test_sdk_resolver_honors_overrides_and_numeric_versions(tmp_path, monkeypatch):
-    monkeypatch.setattr(metadata.shutil, 'which', lambda name: None)
+    monkeypatch.setattr(tools.shutil, 'which', lambda name: None)
     monkeypatch.setenv('RESTOOL_EXECUTABLE', str(tmp_path/'missing'))
     monkeypatch.delenv('AAPT2_EXECUTABLE', raising=False)
     monkeypatch.delenv('ANDROID_HOME', raising=False)
@@ -296,27 +298,27 @@ def test_sdk_resolver_honors_overrides_and_numeric_versions(tmp_path, monkeypatc
         path = tmp_path/'build-tools'/version/name
         path.parent.mkdir(parents=True)
         path.touch(); path.chmod(0o755)
-    assert metadata.resolve_metadata_tools() == MetadataTools(str((tmp_path/'build-tools/10.0.0'/name).resolve()), None)
+    assert tools.resolve_metadata_tools() == MetadataTools(str((tmp_path/'build-tools/10.0.0'/name).resolve()), None)
     monkeypatch.setenv('AAPT2_EXECUTABLE', str(tmp_path/'bad'))
-    assert metadata.resolve_metadata_tools() == MetadataTools()
+    assert tools.resolve_metadata_tools() == MetadataTools()
 
 
 def test_restool_resolves_next_to_shared_hdc(tmp_path, monkeypatch, hdc_executable):
     monkeypatch.delenv('RESTOOL_EXECUTABLE', raising=False)
     monkeypatch.setenv('AAPT2_EXECUTABLE', str(tmp_path/'none'))
-    monkeypatch.setattr(metadata.shutil, 'which', lambda name: None)
+    monkeypatch.setattr(tools.shutil, 'which', lambda name: None)
     path = Path(hdc_executable).with_name('restool.exe' if os.name == 'nt' else 'restool')
     path.touch(); path.chmod(0o755)
-    assert metadata.resolve_metadata_tools().restool == str(path.resolve())
+    assert tools.resolve_metadata_tools().restool == str(path.resolve())
 
 
 def test_tool_timeout_failure_and_output_limit(monkeypatch):
-    monkeypatch.setattr(metadata, 'TOOL_TIMEOUT', 0.1)
-    with pytest.raises(metadata.MetadataReadError):
-        metadata._run_tool([sys.executable, '-c', 'import time;time.sleep(5)'])
+    monkeypatch.setattr(guard, 'TOOL_TIMEOUT', 0.1)
+    with pytest.raises(guard.MetadataReadError):
+        guard.run_tool([sys.executable, '-c', 'import time;time.sleep(5)'])
     with pytest.raises(ValueError, match='tool failed'):
-        metadata._run_tool([sys.executable, '-c', 'raise SystemExit(1)'])
-    monkeypatch.setattr(metadata, 'TOOL_TIMEOUT', 5)
-    monkeypatch.setattr(metadata, 'MAX_TOOL_OUTPUT', 100)
-    with pytest.raises(metadata.MetadataReadError):
-        metadata._run_tool([sys.executable, '-c', 'print("a"*101)'])
+        guard.run_tool([sys.executable, '-c', 'raise SystemExit(1)'])
+    monkeypatch.setattr(guard, 'TOOL_TIMEOUT', 5)
+    monkeypatch.setattr(guard, 'MAX_TOOL_OUTPUT', 100)
+    with pytest.raises(guard.MetadataReadError):
+        guard.run_tool([sys.executable, '-c', 'print("a"*101)'])

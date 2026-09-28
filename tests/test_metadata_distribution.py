@@ -7,7 +7,7 @@ import zipfile
 import pytest
 
 from scripts.build_exe import REQUIRED_FILES, TOOLS, verify_bundle
-from services import package_metadata_cli as cli
+import cli
 
 
 def test_checked_in_bundle_has_all_pinned_tools_and_notices():

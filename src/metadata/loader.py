@@ -4,7 +4,8 @@ from pathlib import Path
 import queue
 import threading
 
-from services.package_metadata import PackageLabel, read_package_label, resolve_metadata_tools
+from infra.tools import resolve_metadata_tools
+from metadata import PackageLabel, read_package_label
 
 
 def file_fingerprint(path: Path) -> tuple:

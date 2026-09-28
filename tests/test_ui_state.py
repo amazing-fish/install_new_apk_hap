@@ -8,7 +8,7 @@ from tkinter import font as tkfont
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from platforms import DeviceInfo
-from services.package_metadata import PackageLabel
+from metadata import PackageLabel
 
 
 def assert_selection_labels(app, expected):
