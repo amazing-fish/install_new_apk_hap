@@ -46,7 +46,7 @@
 
 ## Harmony APP 日志
 
-- APP 日志只支持当前单选的 Harmony 设备；Android、多选和无选择均不执行 HDC 拉取。
+- APP 日志只作用于目标设备（核心流程第 7 条），且目标必须是 Harmony；目标为 Android 或无法确定唯一目标（多选、多台未选、上次探测失败）时不执行 HDC 拉取。
 - 不在 `/data/app` 下执行全局 `find`，固定应用直接 `file recv`，避免额外遍历、同名目录歧义和搜索失败。
 - 乾崑：`/data/app/el2/100/base/com.yinwang.qiankunapp.hm/haps/phone/files/qklog/`。
 - Demo：`/data/app/el2/100/base/adsmobilesdk.all.huawei/haps/entry/files`。

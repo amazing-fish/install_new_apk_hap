@@ -490,14 +490,13 @@ class App(tk.Tk):
         if task.cancelled:
             self._end_task(task, "安装已中止", status="已中止")
             return
-        errors = {"android": detection.android_error, "harmony": detection.harmony_error}
-        failed_platforms = {platform for platform, error in errors.items() if error}
+        failed_platforms = set(detection.errors)
         if failed_platforms:
             # Only devices of a platform whose probe succeeded can be re-verified;
             # never let a failed probe redirect the install to other devices.
             verifiable_ids = {d.device_id for d in self.devices if d.platform not in failed_platforms}
             if not previous_selection or previous_selection - verifiable_ids:
-                message = "\n".join(error for error in errors.values() if error)
+                message = "\n".join(detection.errors.values())
                 self._apply_install_preparation_error(task, RuntimeError(message))
                 return
         self._apply_device_refresh(

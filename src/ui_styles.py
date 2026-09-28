@@ -129,10 +129,6 @@ def apply_theme(window: tk.Tk) -> bool:
     return True
 
 
-def theme_active(window: tk.Misc) -> bool:
-    return ttk.Style(window).theme_use() == THEME_NAME
-
-
 def configure_window(window: tk.Tk) -> None:
     window.title(WINDOW_TITLE)
     themed = apply_theme(window)
