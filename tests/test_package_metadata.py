@@ -1,7 +1,6 @@
 import json
 import os
 from pathlib import Path
-import subprocess
 import struct
 import sys
 import zipfile

@@ -5,7 +5,6 @@ from tkinter import font as tkfont, ttk
 
 import pytest
 
-import main
 import ui_styles
 from cli import run_cli
 
