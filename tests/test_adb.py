@@ -7,8 +7,8 @@ import pytest
 
 import main
 from infra import process, tools
-from services import device_detector
-from services.device_detector import DeviceDetectionResult, DeviceInfo
+from platforms import DeviceDetectionResult, DeviceInfo, detect_devices
+from platforms.harmony import HARMONY
 
 
 @pytest.fixture
@@ -57,8 +57,8 @@ def test_unusable_sdk_root_is_skipped_not_fatal(isolated_adb, monkeypatch, tmp_p
 
 def test_missing_adb_is_reported_and_harmony_devices_are_kept(isolated_adb, monkeypatch):
     harmony = DeviceInfo('harmony-a', 'harmony', 'device')
-    monkeypatch.setattr(device_detector, 'detect_hdc_devices', lambda: [harmony])
-    result = device_detector.detect_devices()
+    monkeypatch.setattr(HARMONY, 'detect', lambda: [harmony])
+    result = detect_devices()
     assert result.devices == [harmony]
     assert '未找到 adb' in result.android_error
     assert result.harmony_error is None
@@ -69,9 +69,9 @@ def test_missing_adb_is_reported_and_harmony_devices_are_kept(isolated_adb, monk
     ((0, '', '', {'timed_out': True}), '超时'),
 ])
 def test_failed_or_hung_adb_probe_is_an_error(adb_executable, monkeypatch, fake_process, outcome, expected):
-    monkeypatch.setattr(device_detector, 'detect_hdc_devices', lambda: [])
+    monkeypatch.setattr(HARMONY, 'detect', lambda: [])
     fake_process.handler = lambda command, **kwargs: outcome
-    result = device_detector.detect_devices()
+    result = detect_devices()
     assert expected in result.android_error
     assert fake_process.calls[0][1] == {'timeout': process.PROBE_TIMEOUT}
 

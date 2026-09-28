@@ -4,7 +4,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from services import device_detector
+import platforms
+from platforms import android, harmony
+from platforms.android import ANDROID
+from platforms.harmony import HARMONY
 
 
 def test_detect_adb_devices_ignores_daemon_diagnostic_lines(monkeypatch, adb_executable) -> None:
@@ -13,11 +16,12 @@ def test_detect_adb_devices_ignores_daemon_diagnostic_lines(monkeypatch, adb_exe
 * daemon not running; starting now at tcp:5037
 * daemon started successfully
 R5CN1234567 device product:example model:Phone device:phone transport_id:1
+emulator-5554 device
 """
 
-    monkeypatch.setattr(device_detector, "_run_command", lambda _command: output)
+    monkeypatch.setattr(android, "run_probe", lambda *_args, **_kwargs: output)
 
-    devices = device_detector.detect_adb_devices()
+    devices = ANDROID.detect()
 
     assert [device.device_id for device in devices] == ["R5CN1234567"]
     assert devices[0].status == "device"
@@ -30,9 +34,9 @@ List of devices attached
 R5CN1234567 device product:example model:Phone device:phone transport_id:1
 """
 
-    monkeypatch.setattr(device_detector, "_run_command", lambda _command: output)
+    monkeypatch.setattr(android, "run_probe", lambda *_args, **_kwargs: output)
 
-    devices = device_detector.detect_adb_devices()
+    devices = ANDROID.detect()
 
     assert [device.device_id for device in devices] == ["R5CN1234567"]
 
@@ -43,8 +47,15 @@ def test_detect_hdc_devices_ignores_diagnostic_lines(monkeypatch, hdc_executable
 ABCDEF0123456789
 """
 
-    monkeypatch.setattr(device_detector, "_run_hdc_command", lambda _command: output)
+    monkeypatch.setattr(harmony, "run_probe", lambda *_args, **_kwargs: output)
 
-    devices = device_detector.detect_hdc_devices()
+    devices = HARMONY.detect()
 
     assert [device.device_id for device in devices] == ["ABCDEF0123456789"]
+
+
+def test_every_driver_is_registered_in_probe_order() -> None:
+    assert list(platforms.DRIVERS) == ["android", "harmony"]
+    assert platforms.driver_for("android") is ANDROID
+    assert platforms.driver_for("unknown") is None
+    assert {driver.package_kind for driver in platforms.DRIVERS.values()} == {"APK", "HAP"}

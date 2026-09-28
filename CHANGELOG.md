@@ -8,6 +8,7 @@
 - 安装退出码为 0 但输出以明确失败标记开头（hdc `[Fail]`、adb `Failure [` 等）时判定为安装失败（#73）。
 - 所有外部命令统一经 `infra/process.run` 执行；设备检测 / UDID 15 秒、日志拉取 120 秒超时（#74）。
 - adb 支持 `ADB_EXECUTABLE` 与 SDK `platform-tools` 解析；adb 缺失或失败时明确报告 Android 探测失败，不再显示“未检测到设备”（#74）。
+- 平台差异收敛到 `src/platforms/` 的 Android / Harmony 驱动；Android 崩溃日志命令成功但没有输出时提示“无输出”，不再提示“已写入”（#78）。
 - 界面改用 sv-ttk Sun Valley 浅色主题：安装按钮为强调色主按钮，日志区细边框，选中行浅蓝；缺少 sv-ttk 时回退原生主题（#80）。
 - Windows 高 DPI 下按系统缩放清晰渲染（此前被位图拉伸发虚），初始窗口与字号随缩放放大（#80）。
 
