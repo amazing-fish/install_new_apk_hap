@@ -85,9 +85,12 @@ def _build_device_section(app, container):
 
 def _build_package_section(app, container):
     section, _heading = _section(container, '安装包')
-    folder = _field_row(section, '目录', app.folder_var, actions=(
+    app.folder_entry = folder = _field_row(section, '目录', app.folder_var, actions=(
         ('选择目录', app.choose_folder), ('扫描最新包', app.refresh_devices_and_packages)))
     app.scan_button = folder.actions.buttons[1]
+    # The path is editable: Enter scans what was typed.
+    folder.bind('<Return>', app.submit_folder)
+    folder.bind('<KP_Enter>', app.submit_folder)
     for platform, variable, callback, attr in (
         ('APK', app.apk_var, app.on_apk_selected, 'apk_combo'),
         ('HAP', app.hap_var, app.on_hap_selected, 'hap_combo'),

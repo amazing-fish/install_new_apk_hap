@@ -50,7 +50,7 @@ def layout():
     for name, value in values.items():
         setattr(host, name, tk.StringVar(master=host, value=value))
     callbacks = {name for _, name in BUTTON_ACTIONS + APP_LOG_ACTIONS} | {
-        "on_device_select", "on_apk_selected", "on_hap_selected"
+        "on_device_select", "on_apk_selected", "on_hap_selected", "submit_folder"
     }
     for name in callbacks:
         setattr(host, name, lambda *args, name=name: host.calls.append(name))
