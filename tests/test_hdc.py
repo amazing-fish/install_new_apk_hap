@@ -80,7 +80,7 @@ def test_sdk_root_layouts(isolated_hdc, monkeypatch, tmp_path, relative):
 
 def test_missing_hdc_preserves_android_and_reports_failure(isolated_hdc, monkeypatch):
     android = DeviceInfo('android-a', 'android', 'device')
-    monkeypatch.setattr(ANDROID, 'detect', lambda: [android])
+    monkeypatch.setattr(ANDROID, 'detect', lambda cancel=None: [android])
     result = detect_devices()
     assert result.devices == [android]
     assert '未找到 HDC' in result.harmony_error
@@ -88,7 +88,7 @@ def test_missing_hdc_preserves_android_and_reports_failure(isolated_hdc, monkeyp
 
 @pytest.mark.parametrize('code,stdout,stderr', [(7, 'server output', 'server failed'), (0, '[Fail] server unavailable', '')])
 def test_failed_detection_keeps_diagnostics(monkeypatch, hdc_executable, code, stdout, stderr, fake_process):
-    monkeypatch.setattr(ANDROID, 'detect', lambda: [])
+    monkeypatch.setattr(ANDROID, 'detect', lambda cancel=None: [])
     fake_process.handler = lambda command, **kwargs: subprocess.CompletedProcess(command, code, stdout, stderr)
     result = detect_devices()
     assert result.devices == []
@@ -98,7 +98,7 @@ def test_failed_detection_keeps_diagnostics(monkeypatch, hdc_executable, code, s
 
 
 def test_empty_hdc_result_is_success(monkeypatch, hdc_executable, fake_process):
-    monkeypatch.setattr(ANDROID, 'detect', lambda: [])
+    monkeypatch.setattr(ANDROID, 'detect', lambda cancel=None: [])
     fake_process.handler = lambda command, **kwargs: subprocess.CompletedProcess(command, 0, '[Empty]', '')
     assert detect_devices() == DeviceDetectionResult([])
 
@@ -235,13 +235,13 @@ def test_harmony_install_keeps_resolved_path_and_can_stop(monkeypatch, hdc_execu
 
 def test_refresh_diagnostic_and_recovery_are_visible(app, monkeypatch):
     android = DeviceInfo('android-a', 'android', 'device')
-    monkeypatch.setattr(main, 'detect_devices', lambda: DeviceDetectionResult([android], '未找到 HDC'))
+    monkeypatch.setattr(main, 'detect_devices', lambda cancel=None: DeviceDetectionResult([android], '未找到 HDC'))
     refresh = lambda: REAL_REFRESH_DEVICES(app)
     refresh()
     assert app.devices == [android]
     assert 'Harmony 设备探测失败' in app.log_text.get('1.0', 'end')
     assert '未检测到设备' not in app.log_text.get('1.0', 'end')
-    monkeypatch.setattr(main, 'detect_devices', lambda: DeviceDetectionResult([android]))
+    monkeypatch.setattr(main, 'detect_devices', lambda cancel=None: DeviceDetectionResult([android]))
     refresh()
     recovered = app.log_text.get('1.0', 'end')
     assert '设备列表已刷新' in recovered

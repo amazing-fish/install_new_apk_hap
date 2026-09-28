@@ -88,7 +88,7 @@ def preflight(monkeypatch):
     from platforms import DeviceDetectionResult
 
     def set_devices(devices, **probe_errors):
-        monkeypatch.setattr(main, 'detect_devices', lambda: DeviceDetectionResult(list(devices), **probe_errors))
+        monkeypatch.setattr(main, 'detect_devices', lambda cancel=None: DeviceDetectionResult(list(devices), **probe_errors))
     return set_devices
 
 

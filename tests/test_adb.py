@@ -60,7 +60,7 @@ def test_unusable_sdk_root_is_skipped_not_fatal(isolated_adb, monkeypatch, tmp_p
 
 def test_missing_adb_is_reported_and_harmony_devices_are_kept(isolated_adb, monkeypatch):
     harmony = DeviceInfo('harmony-a', 'harmony', 'device')
-    monkeypatch.setattr(HARMONY, 'detect', lambda: [harmony])
+    monkeypatch.setattr(HARMONY, 'detect', lambda cancel=None: [harmony])
     result = detect_devices()
     assert result.devices == [harmony]
     assert '未找到 adb' in result.android_error
@@ -72,7 +72,7 @@ def test_missing_adb_is_reported_and_harmony_devices_are_kept(isolated_adb, monk
     ((0, '', '', {'timed_out': True}), '超时'),
 ])
 def test_failed_or_hung_adb_probe_is_an_error(adb_executable, monkeypatch, fake_process, outcome, expected):
-    monkeypatch.setattr(HARMONY, 'detect', lambda: [])
+    monkeypatch.setattr(HARMONY, 'detect', lambda cancel=None: [])
     fake_process.handler = lambda command, **kwargs: outcome
     result = detect_devices()
     assert expected in result.android_error
@@ -81,7 +81,7 @@ def test_failed_or_hung_adb_probe_is_an_error(adb_executable, monkeypatch, fake_
 
 def test_android_probe_failure_is_logged_and_blocks_auto_select(app, monkeypatch):
     harmony = DeviceInfo('harmony-a', 'harmony', 'device')
-    monkeypatch.setattr(main, 'detect_devices', lambda: DeviceDetectionResult([harmony], android_error='未找到 adb'))
+    monkeypatch.setattr(main, 'detect_devices', lambda cancel=None: DeviceDetectionResult([harmony], android_error='未找到 adb'))
     REAL_REFRESH_DEVICES(app)
     log = app.log_text.get('1.0', 'end')
     assert 'Android 设备探测失败：未找到 adb；已保留检测到的 Harmony 1 台' in log

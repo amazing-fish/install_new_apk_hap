@@ -50,8 +50,8 @@ class HarmonyDriver(PlatformDriver):
     crash_log_description = f"Harmony 最近 {CRASH_LOG_DAYS} 天崩溃日志"
     tool_error = HdcError
 
-    def detect(self) -> List[DeviceInfo]:
-        output = _hdc_probe([resolve_hdc_executable(), "list", "targets"])
+    def detect(self, cancel: Optional[threading.Event] = None) -> List[DeviceInfo]:
+        output = _hdc_probe([resolve_hdc_executable(), "list", "targets"], cancel)
         return [DeviceInfo(device_id=line, platform=self.key, status="device") for line in parse_device_lines(output)]
 
     def install_command(self, device_id: str, package: Path, *, allow_test: bool = False,

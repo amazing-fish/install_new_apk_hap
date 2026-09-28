@@ -98,7 +98,7 @@ def test_refresh_error_recovery_and_log_clear_keep_visible_results(app, tmp_path
     app._apply_device_refresh([])
     assert app.log_text.get('1.0', 'end') != failed
     monkeypatch.setattr(main.messagebox, 'showwarning', lambda *args: None)
-    def broken_preflight():
+    def broken_preflight(cancel=None):
         raise RuntimeError('preinstall probe failed')
     monkeypatch.setattr(main, 'detect_devices', broken_preflight)
     app.latest_apk = tmp_path / 'demo.apk'

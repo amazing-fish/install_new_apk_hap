@@ -152,6 +152,8 @@ class App(tk.Tk):
         if request_id != self._latest_refresh_request_id:
             return
         self._last_device_refresh_snapshot = None
+        # The kept list is stale, so its "only" device may not be the only one.
+        self.last_probe_failed = True
         self.log(f"刷新设备列表失败：{error}")
         self._set_refresh_state(False)
 
@@ -306,7 +308,7 @@ class App(tk.Tk):
 
     def _apply_hdc_udid_error(self, task: Task, device_id: str, error: Exception) -> None:
         if task.cancelled:
-            self._end_task(task, "获取 UDID 已中止")
+            self._end_task(task, "获取 UDID 已中止", status="已中止")
             return
         message = f"获取 UDID 失败：设备 {self._device_label(device_id)}，{error}"
         self._end_task(task, message, ok=False)
@@ -530,7 +532,7 @@ class App(tk.Tk):
 
         def preflight():
             started_at = time.perf_counter()
-            detection = detect_devices()
+            detection = detect_devices(cancel=task.cancel)
             return detection, time.perf_counter() - started_at
 
         self.tasks.run(
@@ -557,7 +559,7 @@ class App(tk.Tk):
         validation_duration_seconds: float = 0.0,
     ) -> None:
         if task.cancelled:
-            self._end_task(task, "安装已中止")
+            self._end_task(task, "安装已中止", status="已中止")
             return
         errors = {"android": detection.android_error, "harmony": detection.harmony_error}
         failed_platforms = {platform for platform, error in errors.items() if error}
@@ -617,7 +619,9 @@ class App(tk.Tk):
     def _end_task(self, task: Task, message: str, ok: bool = True, status: Optional[str] = None) -> None:
         """Log the outcome and leave a final status; the runner then frees the slot."""
         if status is None:
-            status = "已中止" if task.cancelled else f"{task.label}{'完成' if ok else '失败'}"
+            # Stop only counts when it interrupted the work; a result that
+            # already arrived is reported as it is.
+            status = f"{task.label}{'完成' if ok else '失败'}"
         self.install_status_var.set(status)
         self.log(message)
 
@@ -699,7 +703,7 @@ class App(tk.Tk):
     def _apply_log_collection_error(self, task: Task, device_id: str, error: Exception) -> None:
         device_label = self._device_label(device_id)
         if task.cancelled:
-            self._end_task(task, f"{task.label}已中止：设备 {device_label}")
+            self._end_task(task, f"{task.label}已中止：设备 {device_label}", status="已中止")
             return
         self._end_task(task, f"{task.label}失败：设备 {device_label}\n{error}", ok=False)
         messagebox.showwarning("提示", f"{task.label}失败，设备 {device_label}: {error}")
@@ -711,7 +715,7 @@ class App(tk.Tk):
         self.log(f"{driver.label} {device_label} 崩溃日志命令: {format_command_for_log(result.command)}")
         if process.returncode != 0:
             if task.cancelled:
-                self._end_task(task, f"获取崩溃日志已中止：设备 {device_label}")
+                self._end_task(task, f"获取崩溃日志已中止：设备 {device_label}", status="已中止")
                 return
             self._end_task(task, f"获取崩溃日志失败：设备 {device_label} 返回码 {process.returncode}\n"
                                  f"{process.stderr}", ok=False)
@@ -771,7 +775,7 @@ class App(tk.Tk):
         diagnostics = "\n".join(part for part in (stdout.strip(), stderr.strip()) if part)
         if returncode != 0:
             if task.cancelled:
-                self._end_task(task, f"获取{target.display_name}已中止：设备 {device_label}")
+                self._end_task(task, f"获取{target.display_name}已中止：设备 {device_label}", status="已中止")
                 return
             self._end_task(
                 task,

@@ -11,6 +11,8 @@ from infra.tools import HdcError
 from platforms import DeviceInfo
 from platforms.base import CollectResult, InstallResult
 
+# The app fixture stubs refresh_devices out; keep the real one for refresh tests.
+REAL_REFRESH_DEVICES = main.App.refresh_devices
 ANDROID = DeviceInfo('a', 'android', 'device')
 HARMONY = DeviceInfo('h', 'harmony', 'device')
 
@@ -199,6 +201,51 @@ def test_udid_probe_can_be_cancelled_without_an_error_dialog(app, monkeypatch, d
     assert not warnings and not app.tasks.busy
     assert app.install_status_var.get() == '已中止'
     assert '获取 UDID 已中止' in app.log_text.get('1.0', 'end')
+
+
+def test_stop_during_preflight_reaches_the_device_probes(app, monkeypatch, fake_process, deferred_tasks):
+    monkeypatch.setattr(main.messagebox, 'showwarning', lambda *args: None)  # fail, never block
+    app._apply_device_refresh([ANDROID])
+    app.latest_apk = Path('a.apk')
+    fake_process.handler = lambda command, **kwargs: (-1, '', '', {'cancelled': kwargs['cancel'].is_set()})
+    app.install_to_selected()
+    app.install_to_selected()  # stop while the probes would still be running
+    deferred_tasks.run_all()
+    assert len(fake_process.calls) == 2  # adb and hdc probes
+    assert all(kwargs['cancel'].is_set() for _command, kwargs in fake_process.calls)
+    assert app.install_status_var.get() == '已中止' and not app.tasks.busy
+
+
+@pytest.fixture
+def late_stop(app):
+    """Stop lands after the worker finished but before its result is applied."""
+    def post(callback):
+        app.tasks.cancel()
+        callback()
+    app.tasks.post = post
+
+
+def test_late_stop_does_not_relabel_a_successful_udid(app, monkeypatch, late_stop):
+    app._apply_device_refresh([HARMONY])
+    monkeypatch.setattr(main.messagebox, 'showinfo', lambda *args: None)
+    monkeypatch.setattr(main.DRIVERS['harmony'], 'udid', lambda device_id, cancel=None: 'UDID-123')
+    app.fetch_hdc_udid()
+    assert app.install_status_var.get() == '获取UDID完成'
+    assert app.clipboard_get() == 'UDID-123'
+
+
+def test_refresh_exception_blocks_auto_target_from_the_stale_list(app, monkeypatch):
+    app._apply_device_refresh([ANDROID])
+    app.device_tree.selection_remove(*app.device_tree.selection())
+    app.update()
+    assert app.crash_log_button.instate(['!disabled'])
+
+    def broken(cancel=None):
+        raise RuntimeError('probe crashed')
+    monkeypatch.setattr(main, 'detect_devices', broken)
+    REAL_REFRESH_DEVICES(app)
+    assert '刷新设备列表失败：probe crashed' in app.log_text.get('1.0', 'end')
+    assert app.crash_log_button.instate(['disabled'])
 
 
 def test_cancelled_udid_probe_is_reported_as_an_hdc_error(fake_process, hdc_executable):

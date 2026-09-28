@@ -73,7 +73,7 @@ class PlatformDriver:
     crash_log_description: str = "崩溃日志"
     tool_error: type = ToolError
 
-    def detect(self) -> List[DeviceInfo]:
+    def detect(self, cancel: Optional[threading.Event] = None) -> List[DeviceInfo]:
         raise NotImplementedError
 
     def install_command(self, device_id: str, package: Path, *, allow_test: bool = False,
