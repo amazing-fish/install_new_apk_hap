@@ -46,6 +46,8 @@ def main() -> None:
     for path in files:
         command.extend(['--add-binary' if path.suffix == '.exe' else '--add-data',
                         f'{path}{os.pathsep}package_tools'])
+    # sv-ttk is Tcl scripts and sprite images, not Python: bundle its data files.
+    command.extend(['--collect-data', 'sv_ttk'])
     subprocess.run(command + [str(ROOT / 'src/main.py')], cwd=ROOT, env=environment, check=True)
 
 

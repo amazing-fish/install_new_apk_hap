@@ -1,0 +1,2 @@
+# Runtime: Sun Valley ttk theme (MIT). The app falls back to the native theme without it.
+sv-ttk==2.6.0

@@ -113,8 +113,9 @@ def _build_log_section(app, container):
     text_frame.pack(fill=tk.BOTH, expand=True)
     text_frame.columnconfigure(0, weight=1)
     text_frame.rowconfigure(0, weight=1)
+    # Border and relief come from the option database set by the window theme.
     app.log_text = tk.Text(text_frame, height=6, width=1, wrap=tk.NONE, takefocus=True,
-        relief=tk.SOLID, borderwidth=1, padx=6, pady=4, font='TkFixedFont')
+        padx=6, pady=4, font='TkFixedFont')
     app.log_text.grid(row=0, column=0, sticky=tk.NSEW)
     app.log_v_scrollbar = AutoHideScrollbar(text_frame, command=app.log_text.yview)
     app.log_v_scrollbar.grid(row=0, column=1, sticky=tk.NS)

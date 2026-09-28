@@ -11,13 +11,34 @@ from services.package_metadata import (
 )
 
 
+def theme_report() -> dict:
+    """Which ttk theme the GUI would start with (the theme falls back silently)."""
+    import tkinter as tk
+    from tkinter import ttk
+    import ui_styles
+    window = tk.Tk()
+    window.withdraw()
+    try:
+        themed = ui_styles.apply_theme(window)
+        return {'themed': themed, 'theme': ttk.Style(window).theme_use()}
+    finally:
+        window.destroy()
+
+
 def run_cli(arguments: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     action = parser.add_mutually_exclusive_group(required=True)
     action.add_argument('--package-label-report', type=Path, metavar='OUTPUT_JSON')
     action.add_argument('--tool-notices', type=Path, metavar='NEW_DIRECTORY')
+    action.add_argument('--theme-report', type=Path, metavar='OUTPUT_JSON')
     parser.add_argument('packages', nargs='*', type=Path)
     args = parser.parse_args(arguments)
+    if args.theme_report:
+        if args.packages:
+            parser.error('--theme-report takes no package paths')
+        args.theme_report.write_text(json.dumps(theme_report(), ensure_ascii=False, indent=2) + '\n',
+                                     encoding='utf8')
+        return 0
     bundled = bundled_tools_directory()
     if args.tool_notices:
         if args.packages or bundled is None:

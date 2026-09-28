@@ -27,8 +27,11 @@
 需要 Python 3.11+，并确保 Tkinter 可用。
 
 ```bash
+python -m pip install -r requirements.txt
 python src/main.py
 ```
+
+界面使用 [sv-ttk](https://github.com/rdbende/Sun-Valley-ttk-theme)（Sun Valley 浅色主题，MIT）；未安装或加载失败时回退到系统原生 ttk 主题，功能不受影响。Windows 上按系统缩放比例清晰渲染，不再被位图拉伸。
 
 ### 基本流程
 
@@ -232,7 +235,13 @@ Windows：
 
 ## 开发与测试
 
-安装 pytest 后：
+安装依赖与 pytest 后：
+
+```bash
+python -m pip install -r requirements.txt pytest
+```
+
+运行：
 
 ```bash
 python -m pytest -q -p no:cacheprovider
@@ -260,7 +269,7 @@ python scripts/build_exe.py
 python scripts/verify_exe.py dist/install_new_apk_hap.exe --output build/standalone-exe-validation.json
 ```
 
-`build_exe.py` 会校验内置元数据工具和 NOTICE 后再执行 onefile 打包；`verify_exe.py` 会把最终 exe 放进无 SDK 配置的隔离环境中验证 APK/HAP 元数据读取、内置工具哈希和许可导出。
+`build_exe.py` 会校验内置元数据工具和 NOTICE 后再执行 onefile 打包；`verify_exe.py` 会把最终 exe 放进无 SDK 配置的隔离环境中验证 APK/HAP 元数据读取、内置工具哈希、许可导出，以及 exe 实际启用 Sun Valley 主题。
 
 分支构建产物不是正式 Release。正式发布时 tag 必须与 `VERSION` 完全一致。
 
@@ -271,6 +280,7 @@ python scripts/verify_exe.py dist/install_new_apk_hap.exe --output build/standal
 ```powershell
 .\install_new_apk_hap.exe --package-label-report labels.json package.apk package.hap
 .\install_new_apk_hap.exe --tool-notices new-notices-directory
+.\install_new_apk_hap.exe --theme-report theme.json
 ```
 
 ## 文档
