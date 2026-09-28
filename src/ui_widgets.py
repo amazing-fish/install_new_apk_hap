@@ -34,6 +34,8 @@ class ScrollableArea(ttk.Frame):
         self.content = ttk.Frame(self._body, padding=(12, 5))
         self.content.grid(row=0, column=0, sticky=tk.NSEW)
         self._window = self.canvas.create_window(0, 0, window=self._body, anchor=tk.NW)
+        self._region = None
+        self._viewport = (None, None)
         self._body.bind('<Configure>', self._content_changed)
         # A shortened off-screen item may be unmapped before it is resized.
         self._body.bind('<Unmap>', self._content_changed)
@@ -47,6 +49,7 @@ class ScrollableArea(ttk.Frame):
             ('<Control-End>', lambda event: self._move(1)),
             ('<Control-Prior>', lambda event: self._page(-1)),
             ('<Control-Next>', lambda event: self._page(1)),
+            ('<Configure>', self._window_resized),
         ):
             self._bindings.append((sequence, self._root_window.bind(sequence, callback, add='+')))
 
@@ -56,14 +59,35 @@ class ScrollableArea(ttk.Frame):
             return
         x1, y1, x2, y2 = bounds
         viewport_height = self.canvas.winfo_height()
-        self.canvas.configure(scrollregion=(x1, y1, x2, max(y2, viewport_height)))
-        if y2 <= viewport_height:
+        # Each canvas reconfigure/scroll repaints every embedded control, and
+        # <Configure> fires several times per resize step: skip no-op updates.
+        # The page only scrolls vertically, so the horizontal extent stays
+        # fixed and a width-only resize never reconfigures the canvas.
+        region = (0, y1, 1, max(y2, viewport_height))
+        if region != self._region:
+            self._region = region
+            self.canvas.configure(scrollregion=region)
+        if y2 <= viewport_height and self.canvas.yview()[0] != 0:
             self.canvas.yview_moveto(0)
 
     def _viewport_changed(self, event):
-        self.canvas.itemconfigure(self._window, width=event.width)
-        self._body.rowconfigure(0, minsize=event.height)
+        if event.width != self._viewport[0]:
+            self.canvas.itemconfigure(self._window, width=event.width)
+        if event.height != self._viewport[1]:
+            self._body.rowconfigure(0, minsize=event.height)
+        self._viewport = (event.width, event.height)
         self._content_changed(event)
+
+    def _window_resized(self, event):
+        # Nested pack/grid levels each resize in their own idle pass, and on
+        # Windows every pass repaints the controls below it (~5 repaints per
+        # control per resize step). Settle the whole layout before anything
+        # paints, so each control repaints once for the final geometry.
+        # Only from the toplevel's own <Configure>: there the passes are merely
+        # queued. Settling inside a child's <Configure> re-enters the running
+        # grid pass, which then abandons it and leaves the canvas unmapped.
+        if event.widget is self._root_window and self.winfo_viewable():
+            self.update_idletasks()
 
     def _contains(self, widget):
         while isinstance(widget, tk.Misc):

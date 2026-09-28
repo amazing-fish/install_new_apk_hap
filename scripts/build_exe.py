@@ -48,6 +48,8 @@ def main() -> None:
                         f'{path}{os.pathsep}package_tools'])
     # sv-ttk is Tcl scripts and sprite images, not Python: bundle its data files.
     command.extend(['--collect-data', 'sv_ttk'])
+    # Sourced beside ui_styles (bundle root) to make sv-ttk's sprites cheap to draw.
+    command.extend(['--add-data', f'{ROOT / "src/ui_tile_fix.tcl"}{os.pathsep}.'])
     subprocess.run(command + [str(ROOT / 'src/main.py')], cwd=ROOT, env=environment, check=True)
 
 

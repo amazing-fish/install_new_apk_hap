@@ -90,6 +90,22 @@ def test_package_popup_still_scrolls_and_selects_with_keyboard(app, attr):
         app.tk.call('ttk::combobox::Unpost', str(combo))
 
 
+def test_window_resizes_settle_without_losing_the_page_or_focus(app):
+    # The layout settles from the toplevel's <Configure> (#84). Settling from
+    # inside the canvas' own <Configure> abandoned grid's running pass: the
+    # canvas stayed unmapped and keyboard focus never reached the page.
+    show(app)
+    for geometry in ('900x800', '620x500', '1000x700'):
+        app.geometry(geometry)
+        app.update()
+        assert app.scroll_area.canvas.winfo_ismapped()
+        width = app.scroll_area.canvas.winfo_width()
+        assert app.scroll_area.content.winfo_width() == width
+    app.folder_entry.focus_force()
+    app.update()
+    assert app.focus_get() is app.folder_entry
+
+
 @pytest.mark.parametrize('app', [1.0, 1.5, 2.0], indirect=True)
 def test_roomy_page_never_scrolls_away_from_top(app):
     show(app, '1000x1200')

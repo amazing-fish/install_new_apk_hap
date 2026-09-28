@@ -26,10 +26,12 @@
 - 使用 Tkinter/ttk，不引入额外 GUI 框架；外观只通过 ttk 主题 sv-ttk（`requirements.txt` 固定版本）提供，加载失败必须回退原生主题而不影响启动。exe 构建须打包 sv-ttk 数据文件，并由 `verify_exe.py` 检查主题生效。
 - sv-ttk 的 `<<ThemeChanged>>` 调色板处理会覆盖控件颜色：`ui_styles.apply_theme` 在创建控件前同步执行一次并解除该绑定，运行期不切换主题。
 - Windows 进程为系统 DPI 感知（`enable_high_dpi`），窗口初始尺寸与主题像素字号按 `ui_scale` 放大。
+- sv-ttk 经 `src/ui_tile_fix.tcl` 加载：只加宽浅色主题中两端拉伸元素的贴图中段，并把元素自然尺寸固定为原贴图尺寸；外观与控件尺寸不变，只减少 Windows 上逐块 alpha 混合的平铺次数。exe 须打包该文件，`--theme-report` 的 `tile_fix_sprites` 必须大于 0；`INSTALL_APK_HAP_TILE_FIX=0` 可关闭以对比。
+- 改变窗口尺寸时由 `ScrollableArea` 在顶层窗口自身的 `<Configure>` 中 `update_idletasks`，让多层 grid/pack 一次排定后再绘制；不得在子控件的 `<Configure>` 中同步排版（会打断正在进行的 grid 排版，画布不再映射、键盘焦点丢失）。
 - 设备列表默认至少 3 行，最多 8 行；超过可见范围后滚动访问。
 - 页面、设备表和日志的滚动条仅在内容真实溢出时显示，不需要滚动时不占布局空间。
 - 设备操作区以一个“获取APP日志”菜单承载乾崑/Demo 两种 Harmony 应用日志，不为每个固定路径堆独立常驻按钮。
-- 安装包区域只保留目录、APK 下拉框、HAP 下拉框；下拉文本可包含应用名、版本和真实文件名，不重复显示第二排摘要。
+- 安装包区域只保留目录、APK 下拉框、HAP 下拉框；目录框回车扫描输入的目录；下拉文本可包含应用名、版本和真实文件名，不重复显示第二排摘要。
 - 底部安装/中止按钮固定可达；长内容通过页面滚动、控件自身滚动或操作行换行处理。
 - 设备表行身份始终是 `device_id`；自定义名称只影响显示，不替代设备身份。
 

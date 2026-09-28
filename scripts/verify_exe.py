@@ -79,6 +79,7 @@ def verify_exe(executable: Path, work: Path) -> dict:
     theme_output = work / 'theme.json'
     assert run_exe([str(exe), '--theme-report', str(theme_output)], app_dir, environment) == 0
     theme = json.loads(theme_output.read_text(encoding='utf8'))
+    assert theme.pop('tile_fix_sprites', 0) > 0, theme  # ui_tile_fix.tcl bundled and applied
     assert theme == {'themed': True, 'theme': 'sun-valley-light'}, theme
     report.update(standalone_exe=True, sdk_environment_removed=True, notices_verified=True,
                   theme=theme)

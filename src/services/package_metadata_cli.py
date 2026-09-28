@@ -20,7 +20,8 @@ def theme_report() -> dict:
     window.withdraw()
     try:
         themed = ui_styles.apply_theme(window)
-        return {'themed': themed, 'theme': ttk.Style(window).theme_use()}
+        return {'themed': themed, 'theme': ttk.Style(window).theme_use(),
+                'tile_fix_sprites': getattr(window, 'tile_fix_sprites', 0)}
     finally:
         window.destroy()
 

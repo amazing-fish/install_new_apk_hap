@@ -5,6 +5,7 @@ load it falls back to the platform's native ttk theme so startup never fails.
 """
 
 import os
+from pathlib import Path
 import tkinter as tk
 from tkinter import font as tkfont, ttk
 
@@ -33,6 +34,8 @@ ACCENT_COLOR = "#005fb8"
 SELECTED_ROW_BACKGROUND = "#cfe3f7"
 SELECTED_ROW_FOREGROUND = "#1c1c1c"
 LOG_FONT_FAMILIES = ("Cascadia Mono", "Consolas")
+# Stretched sv-ttk sprites are widened to this (w, h): a few tiles per control.
+TILE_TARGET_SIZE = (320, 64)
 # sv-ttk declares these in pixels (which do not follow `tk scaling` on high
 # DPI) and in "Segoe UI Variable", which has no CJK glyphs, so Chinese text
 # would fall back to a mismatched font. Keep sv-ttk's sizes scaled to the
@@ -73,10 +76,32 @@ def scaled_default_width(window: tk.Misc) -> int:
     return round((sum(width for _, _, width in DEVICE_COLUMN_STYLES) + 60) * ui_scale(window))
 
 
+def _load_sun_valley(window: tk.Tk, sv_ttk) -> None:
+    """Source sv-ttk with fewer tiles per stretched sprite (see ui_tile_fix.tcl).
+
+    Its 20 px sprites make every wide button/entry repaint with hundreds of
+    alpha-blended tiles; on Windows that made a resize step take ~0.5 s.
+    Records the number of widened sprites as ``window.tile_fix_sprites``.
+    """
+    if getattr(window, "_sv_ttk_loaded", False):
+        return
+    window.tile_fix_sprites = 0
+    fix = Path(__file__).with_name("ui_tile_fix.tcl")
+    if os.environ.get("INSTALL_APK_HAP_TILE_FIX") == "0" or not fix.is_file():
+        return  # sv_ttk.set_theme sources the unmodified theme
+    theme = Path(sv_ttk.__file__).with_name("sv.tcl")
+    window.tk.call("source", fix.as_posix())
+    window.tile_fix_sprites = int(window.tk.call(
+        "::ttk_tile_fix::source_theme", theme.as_posix(), "::ttk::theme::sv_light::I",
+        *TILE_TARGET_SIZE))
+    window._sv_ttk_loaded = True  # sv_ttk.set_theme then skips sourcing it again
+
+
 def apply_theme(window: tk.Tk) -> bool:
     """Use Sun Valley light when it loads; otherwise keep the native theme."""
     try:
         import sv_ttk
+        _load_sun_valley(window, sv_ttk)
         sv_ttk.set_theme("light", window)
         # sv-ttk recolours widgets with tk_setPalette from a <<ThemeChanged>>
         # class binding. That event is re-queued by later style/font changes and

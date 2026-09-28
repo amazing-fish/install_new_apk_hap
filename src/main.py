@@ -348,6 +348,14 @@ class App(tk.Tk):
         self.config_manager.set_last_scan_dir(folder)
         self.scan_latest_packages()
 
+    def submit_folder(self, _event: Optional[tk.Event] = None) -> str:
+        """Enter in the folder field: scan the typed directory, remember it if valid."""
+        folder = self.folder_var.get().strip()
+        if self.scan_latest_packages() and folder != self.config_manager.data.get("last_scan_dir", ""):
+            self.config_manager.set_last_scan_dir(folder)
+            self.log(f"已选择安装包目录: {folder}")
+        return "break"
+
     def load_last_scan_dir(self) -> None:
         last_dir = self.config_manager.data.get("last_scan_dir", "")
         if last_dir:
@@ -364,7 +372,8 @@ class App(tk.Tk):
         label = self._package_labels.get(apk_path)
         return not (label is not None and label.test_only is False)
 
-    def scan_latest_packages(self) -> None:
+    def scan_latest_packages(self) -> bool:
+        """Scan the folder field; False when it is empty, missing or unreadable."""
         self._package_label_loader.cancel()
         self._package_label_request = 0
         folder = self.folder_var.get().strip()
@@ -372,13 +381,13 @@ class App(tk.Tk):
             self._last_package_scan_snapshot = None
             messagebox.showwarning("提示", "请先选择目录")
             self.log("扫描失败：未选择目录")
-            return
+            return False
         directory = Path(folder)
         if not directory.is_dir():
             self._last_package_scan_snapshot = None
             messagebox.showwarning("提示", "目录不存在或不是目录")
             self.log(f"扫描失败：目录不存在或不是目录 {directory}")
-            return
+            return False
         try:
             package_info = find_latest_packages(directory)
             files = []
@@ -390,7 +399,7 @@ class App(tk.Tk):
             self._last_package_scan_snapshot = None
             self.log(f"扫描安装包失败：{directory}，{error}")
             messagebox.showwarning("提示", f"扫描安装包失败：{error}")
-            return
+            return False
         previous_selection = (self.latest_apk, self.latest_hap)
         self._package_labels = {}
         self.apk_name_map = {path.name: path for path in package_info.apk_candidates}
@@ -415,6 +424,7 @@ class App(tk.Tk):
         )
         if self._package_label_poll is None:
             self._package_label_poll = self.after(50, self._poll_package_labels)
+        return True
 
     def _close_package_labels(self, event) -> None:
         if event.widget is self:
