@@ -8,8 +8,9 @@
 2. 设备刷新分别调用 ADB/HDC；Harmony 探测失败时保留已检测到的 Android 设备并明确记录原因。
 3. 安装包扫描按文件修改时间排序，APK/HAP 各自默认选择最新候选。
 4. 包元数据由单个后台 worker 异步读取；结果必须匹配当前请求、目录和文件指纹才回写 UI。
-5. 点击安装后冻结设备选择与 APK/HAP 路径，再执行一次设备 preflight；仍在线的原选择被恢复，未选择且只剩一台设备时自动选择该设备。
-6. 安装和日志采集均在线程中执行，状态、日志和提示通过 Tk 主线程更新。
+5. 点击安装后冻结设备选择与 APK/HAP 路径，再执行一次设备 preflight；仍在线的原选择被恢复，未选择且只剩一台设备时自动选择该设备。preflight 通过后在主线程冻结安装计划（设备、驱动、包、显示名），安装期间刷新设备不影响目标。
+6. 后台任务只经 `controller.TaskRunner` 调度，结果通过 Tk 主线程回写。安装、UDID、崩溃日志、APP 日志共用一个设备任务槽：同一时刻只有一个，均可由底部主按钮中止；设备刷新不占用该槽，最新结果胜出。
+7. 单设备操作（UDID、崩溃日志、APP 日志、复制设备码、保存名称）与按钮可用性统一用 `controller.resolve_target`：选中一台用该台；未选且只有一台、且上次探测未失败时用那一台。
 
 ## APK/HAP 元数据
 
@@ -79,7 +80,8 @@ Windows 配置文件：`%APPDATA%/install_new_apk_hap/app_config.json`。
 
 ## 模块职责
 
-- `src/main.py`：应用状态、交互编排、后台任务与主线程回写。
+- `src/main.py`：Tk 界面状态与交互编排，把结果渲染为日志、提示和按钮状态。
+- `src/controller.py`：无 Tk 依赖的 `TaskRunner`（单任务槽、可取消、可注入同步执行）、`resolve_target`、安装计划冻结与逐台执行（`build_install_plan` / `run_install_plan`）。
 - `src/ui_layout.py`：一次性 UI 装配与事件绑定，不读取业务配置。
 - `src/ui_styles.py`：窗口、列宽、行高和视觉常量。
 - `src/ui_widgets.py`：页面滚动、自动隐藏滚动条和操作行布局。

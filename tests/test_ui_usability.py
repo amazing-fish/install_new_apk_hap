@@ -7,7 +7,7 @@ import pytest
 import main
 from ui_styles import DEFAULT_GEOMETRY
 from platforms import DeviceInfo
-from platforms.base import InstallResult
+from platforms.base import CollectResult, InstallResult
 
 
 def show(app, geometry='480x560'):
@@ -182,7 +182,7 @@ def test_tab_visits_actions_and_nested_wheel_does_not_move_page(app):
         assert app.scroll_area.canvas.yview() == (0, 1)
 
 
-def test_platform_actions_follow_selection_and_busy_completion(app):
+def test_platform_actions_follow_selection_and_busy_completion(app, monkeypatch, deferred_tasks):
     devices = [DeviceInfo('a','android','device'), DeviceInfo('h','harmony','device')]
     app._apply_device_refresh(devices)
     assert app.udid_button.instate(['disabled'])
@@ -194,13 +194,17 @@ def test_platform_actions_follow_selection_and_busy_completion(app):
     app.update()
     assert app.udid_button.instate(['!disabled'])
     assert app.app_log_button.instate(['!disabled'])
-    app._set_crash_log_fetch_state(True, '乾崑日志')
+    monkeypatch.setattr(main.messagebox, 'showinfo', lambda *args: None)
+    monkeypatch.setattr(main.DRIVERS['harmony'], 'collect_app_log', lambda *args, **kwargs: CollectResult(
+        ['hdc'], subprocess.CompletedProcess(['hdc'], 0, '', ''), zip_path=Path('D:/qk.zip'), file_count=1))
+    app.fetch_qiankun_log()
     assert all(button.instate(['disabled']) for button in (app.udid_button, app.crash_log_button, app.app_log_button))
     assert app.app_log_button.cget('text') == '获取乾崑日志中…'
     app.device_tree.selection_set('a')
     app.update()
-    app._set_crash_log_fetch_state(False)
+    deferred_tasks.run_all()
     assert app.app_log_button.cget('text') == '获取APP日志'
+    assert app.install_status_var.get() == '获取乾崑日志完成'
     assert app.udid_button.instate(['disabled'])
     assert app.crash_log_button.instate(['!disabled'])
     app._set_refresh_state(True)
@@ -208,33 +212,41 @@ def test_platform_actions_follow_selection_and_busy_completion(app):
     assert app.refresh_button.cget('text') == app.scan_button.cget('text') == '刷新中…'
     app._set_refresh_state(False)
     assert app.crash_log_button.instate(['!disabled'])
-    app._set_install_state(True)
+    app.latest_hap = Path('demo.hap')
+    app.install_to_selected()
     assert app.install_button.cget('text') == '中止安装'
     assert app.crash_log_button.instate(['disabled'])
-    app.request_stop_install()
+    app.install_to_selected()  # the same button stops the task
     assert app.install_button.instate(['disabled'])
     assert app.install_status_var.get() == '正在中止'
-    app._finish_install('已中止')
+    deferred_tasks.run_all()
+    assert app.install_status_var.get() == '已中止'
     assert app.install_button.cget('text') == '安装到所选设备'
+    assert app.install_button.instate(['!disabled'])
 
 
 @pytest.mark.parametrize('outcome,status', [(0,'安装完成'), (1,'安装失败'), ('raise','安装异常'), ('stop','已中止'), ('skip','安装未完成')])
-def test_install_status_distinguishes_failure_cancel_and_skips(app, monkeypatch, outcome, status):
-    app._apply_device_refresh([DeviceInfo('h','harmony','device')])
-    app._set_install_state(True)
+def test_install_status_distinguishes_failure_cancel_and_skips(app, monkeypatch, preflight, outcome, status):
+    devices = [DeviceInfo('h','harmony','device')]
+    app._apply_device_refresh(devices)
+    preflight(devices)
+    if outcome == 'skip':
+        app.latest_apk = Path('demo.apk')  # nothing a Harmony device can install
+    else:
+        app.latest_hap = Path('demo.hap')
     def install(command, stop_event):
-        assert command[0] and stop_event is app.install_stop_event
+        assert command[0] and stop_event is app.tasks.current.cancel
         if outcome == 'raise':
             raise RuntimeError('failed command')
         if outcome == 'stop':
-            app.install_stop_event.set()
+            stop_event.set()
         code = 1 if outcome in (1, 'stop') else 0
         return InstallResult(command=['hdc'], process=subprocess.CompletedProcess([],code,'',''), duration_seconds=0)
     monkeypatch.setattr(main.DRIVERS['harmony'], 'install', install)
-    app._install_worker(['h'], None, None if outcome == 'skip' else Path('demo.hap'), False)
+    app.install_to_selected()
     app.update()
     assert app.install_status_var.get() == status
-    assert not app.installing
+    assert not app.tasks.busy
     assert app.install_button.instate(['!disabled'])
     assert status in app.log_text.get('1.0','end')
 
@@ -243,16 +255,16 @@ def test_preflight_and_udid_exceptions_restore_controls(app, monkeypatch):
     app._apply_device_refresh([DeviceInfo('h','harmony','device')])
     warnings = []
     monkeypatch.setattr(main.messagebox, 'showwarning', lambda *args: warnings.append(args))
-    def broken(*args):
+    def broken(*args, **kwargs):
         raise RuntimeError('probe failed')
     monkeypatch.setattr(main, 'detect_devices', broken)
-    app._set_install_state(True)
-    app._prepare_install_worker({'h'}, None, Path('demo.hap'), False)
+    app.latest_hap = Path('demo.hap')
+    app.install_to_selected()
     app.update()
-    assert not app.installing and app.install_status_var.get() == '安装异常'
+    assert not app.tasks.busy and app.install_status_var.get() == '安装异常'
     monkeypatch.setattr(main.DRIVERS['harmony'], 'udid', broken)
-    app._set_udid_fetch_state(True)
-    app._fetch_hdc_udid_worker('h', main.DRIVERS['harmony'])
+    app.fetch_hdc_udid()
     app.update()
-    assert not app.udid_fetching and app.udid_button.instate(['!disabled'])
+    assert not app.tasks.busy and app.udid_button.instate(['!disabled'])
+    assert app.install_status_var.get() == '获取UDID失败'
     assert len(warnings) == 2

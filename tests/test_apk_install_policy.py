@@ -2,22 +2,8 @@ from pathlib import Path
 
 import pytest
 
-import main
 from platforms import DeviceInfo
 from services.package_metadata import PackageLabel
-
-
-class DeferredThread:
-    created = []
-
-    def __init__(self, *, target, args, daemon):
-        self.target = target
-        self.args = args
-        self.daemon = daemon
-        self.created.append((target, args))
-
-    def start(self):
-        pass
 
 
 def _prepare_apk(app, apk: Path) -> None:
@@ -51,24 +37,27 @@ def test_no_apk_does_not_request_t(app):
     assert app._apk_allow_test(None) is False
 
 
-def test_unknown_metadata_never_blocks_known_android_install(app, tmp_path, monkeypatch):
+def test_unknown_metadata_never_blocks_known_android_install(app, tmp_path, deferred_tasks, preflight,
+                                                           install_plans):
     apk = tmp_path / 'pending.apk'
     apk.touch()
-    app._apply_device_refresh([DeviceInfo('a', 'android', 'device')])
+    devices = [DeviceInfo('a', 'android', 'device')]
+    app._apply_device_refresh(devices)
     app.device_tree.selection_set('a')
     app.on_device_select(None)
     _prepare_apk(app, apk)
     app._package_labels = {}
 
-    DeferredThread.created = []
-    monkeypatch.setattr(main.threading, 'Thread', DeferredThread)
     app.install_to_selected()
 
     assert app.install_button.cget('text') == '中止安装'
-    assert DeferredThread.created[0][1] == ({'a'}, apk, None, True)
+    preflight(devices)
+    deferred_tasks.run_all()
+    assert install_plans == [([('a', apk)], True)]
 
 
-def test_unknown_target_snapshot_stays_installable_when_preflight_selects_android(app, tmp_path, monkeypatch):
+def test_unknown_target_snapshot_stays_installable_when_preflight_selects_android(
+        app, tmp_path, preflight, install_plans):
     """Regression: the target can become Android only after fresh preflight."""
     apk = tmp_path / 'unknown.apk'
     apk.touch()
@@ -79,30 +68,24 @@ def test_unknown_target_snapshot_stays_installable_when_preflight_selects_androi
     app.device_tree.selection_remove(*app.device_tree.selection())
     _prepare_apk(app, apk)
     app._package_labels = {}
+    preflight([DeviceInfo('fresh-a', 'android', 'device')])
 
-    DeferredThread.created = []
-    monkeypatch.setattr(main.threading, 'Thread', DeferredThread)
     app.install_to_selected()
-    assert DeferredThread.created[0][1] == (set(), apk, None, True)
 
-    app._finalize_install(
-        [DeviceInfo('fresh-a', 'android', 'device')],
-        *DeferredThread.created[0][1],
-    )
-    assert DeferredThread.created[1][1] == (['fresh-a'], apk, None, True)
+    assert install_plans == [([('fresh-a', apk)], True)]
 
 
-def test_explicit_non_test_metadata_keeps_precise_no_t_snapshot(app, tmp_path, monkeypatch):
+def test_explicit_non_test_metadata_keeps_precise_no_t_snapshot(app, tmp_path, preflight, install_plans):
     apk = tmp_path / 'release.apk'
     apk.touch()
-    app._apply_device_refresh([DeviceInfo('a', 'android', 'device')])
+    devices = [DeviceInfo('a', 'android', 'device')]
+    app._apply_device_refresh(devices)
     app.device_tree.selection_set('a')
     app.on_device_select(None)
     _prepare_apk(app, apk)
     app._package_labels = {apk: PackageLabel('Release', 'resolved', test_only=False)}
+    preflight(devices)
 
-    DeferredThread.created = []
-    monkeypatch.setattr(main.threading, 'Thread', DeferredThread)
     app.install_to_selected()
 
-    assert DeferredThread.created[0][1] == ({'a'}, apk, None, False)
+    assert install_plans == [([('a', apk)], False)]

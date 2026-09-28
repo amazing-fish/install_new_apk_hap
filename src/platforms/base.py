@@ -73,7 +73,7 @@ class PlatformDriver:
     crash_log_description: str = "崩溃日志"
     tool_error: type = ToolError
 
-    def detect(self) -> List[DeviceInfo]:
+    def detect(self, cancel: Optional[threading.Event] = None) -> List[DeviceInfo]:
         raise NotImplementedError
 
     def install_command(self, device_id: str, package: Path, *, allow_test: bool = False,
@@ -92,7 +92,7 @@ class PlatformDriver:
                           cancel: Optional[threading.Event] = None) -> CollectResult:
         raise NotImplementedError
 
-    def udid(self, device_id: str) -> Optional[str]:
+    def udid(self, device_id: str, cancel: Optional[threading.Event] = None) -> Optional[str]:
         raise NotImplementedError(f"{self.label} 不支持获取 UDID")
 
     def collect_app_log(self, device_id: str, output_dir: Path, target_key: str,
@@ -126,10 +126,11 @@ def run_transfer(command: List[str], cancel: Optional[threading.Event] = None) -
     return result.completed()
 
 
-def run_probe(command: List[str], error_type: type, tool_name: str, *, fail_marker: Optional[str] = None) -> str:
-    """A probe that cannot run, times out or fails is an error, never 'no devices'."""
+def run_probe(command: List[str], error_type: type, tool_name: str, *, fail_marker: Optional[str] = None,
+              cancel: Optional[threading.Event] = None) -> str:
+    """A probe that cannot run, times out, is cancelled or fails is an error, never 'no devices'."""
     try:
-        result = process.run(command, timeout=process.PROBE_TIMEOUT)
+        result = process.run(command, timeout=process.PROBE_TIMEOUT, cancel=cancel)
     except process.ToolLaunchError as error:
         raise error_type(f'{tool_name} 无法执行：{error}') from error
     command_text = subprocess.list2cmdline(command)

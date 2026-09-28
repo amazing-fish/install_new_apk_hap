@@ -2,7 +2,6 @@ import os
 import threading
 import time
 
-import main
 from services import package_label_loader as loader_module
 from services.package_label_loader import file_fingerprint
 from services.package_metadata import MetadataTools, PackageLabel
@@ -81,25 +80,19 @@ def test_stale_generation_empty_directory_and_changed_file_are_ignored(app, tmp_
     assert app.package_summary_var.get() == '未找到可安装包'
 
 
-def test_metadata_apply_does_not_mutate_install_click_snapshot(app, monkeypatch, tmp_path):
+def test_metadata_apply_does_not_mutate_install_click_snapshot(app, tmp_path, deferred_tasks, preflight,
+                                                              install_plans):
     from platforms import DeviceInfo
     path = tmp_path/'app.apk'; path.touch()
     devices = [DeviceInfo('a', 'android', 'device')]
     app._apply_device_refresh(devices); app.device_tree.selection_set('a')
     app.latest_apk = path
     app._package_candidates = ([path], [])
-    tasks = []
-    class DeferredThread:
-        def __init__(self, *, target, args, daemon):
-            self.args = args
-        def start(self):
-            tasks.append(self.args)
-    monkeypatch.setattr(main.threading, 'Thread', DeferredThread)
+    preflight(devices)
     # No metadata at click time => safe permissive snapshot.
     app.install_to_selected()
-    assert tasks[0] == ({'a'}, path, None, True)
     # A later precise result may change future installs, not the in-flight one.
     app._apply_package_labels({path: PackageLabel('Renamed display', 'resolved', test_only=False)})
-    app._finalize_install(devices, *tasks[0])
-    assert tasks[1] == (['a'], path, None, True)
+    deferred_tasks.run_all()
+    assert install_plans == [([('a', path)], True)]
     assert app._apk_allow_test(path) is False

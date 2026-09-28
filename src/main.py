@@ -1,6 +1,5 @@
 import os
 import queue
-import subprocess
 import threading
 import time
 import tkinter as tk
@@ -10,8 +9,11 @@ from tkinter import filedialog, messagebox, ttk
 from typing import Dict, Iterable, List, Optional, Set, Tuple
 
 from config_manager import ConfigManager
+from controller import (
+    Task, TaskRunner, build_install_plan, format_command_for_log, resolve_target, run_install_plan,
+)
 from platforms import DRIVERS, DeviceInfo, detect_devices, driver_for
-from platforms.base import CollectResult, InstallResult, PlatformDriver
+from platforms.base import CollectResult, PlatformDriver
 from services.package_scanner import find_latest_packages
 from services.package_label_loader import PackageLabelLoader, file_fingerprint
 from services.package_metadata import package_display_labels
@@ -37,10 +39,6 @@ def reorder_devices_for_refresh(
     return new_devices + existing_devices, new_device_ids
 
 
-def format_command_for_log(command: Iterable[str]) -> str:
-    return subprocess.list2cmdline(list(command))
-
-
 class App(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
@@ -52,9 +50,12 @@ class App(tk.Tk):
         self.latest_hap: Optional[Path] = None
         self.apk_name_map: Dict[str, Path] = {}
         self.hap_name_map: Dict[str, Path] = {}
-        self.installing = False
         self.refreshing = False
-        self.install_stop_event = threading.Event()
+        # A failed probe means the "only" device may not be the only one.
+        self.last_probe_failed = False
+        # One device task (install / UDID / logs) at a time; each can be cancelled.
+        self.tasks = TaskRunner(post=lambda callback: self.after(0, callback),
+                                on_change=self._on_task_change)
         self.name_var = tk.StringVar(master=self)
         self.folder_var = tk.StringVar(master=self)
         self.apk_var = tk.StringVar(master=self, value="未找到")
@@ -63,9 +64,6 @@ class App(tk.Tk):
         self.device_summary_var = tk.StringVar(master=self, value=format_device_summary(self.devices))
         self.selected_device_summary_var = tk.StringVar(master=self, value="未选择设备")
         self.package_summary_var = tk.StringVar(master=self, value=format_package_summary(None, None))
-        self.udid_fetching = False
-        self.crash_log_fetching = False
-        self.log_operation = ""
         self.device_ids_before_last_refresh: Optional[Set[str]] = None
         self._latest_refresh_request_id = 0
         self._last_device_refresh_snapshot = None
@@ -128,22 +126,16 @@ class App(tk.Tk):
         self._latest_refresh_request_id += 1
         request_id = self._latest_refresh_request_id
         self._set_refresh_state(True)
-        threading.Thread(target=self._refresh_devices_worker, args=(request_id,), daemon=True).start()
+        self.tasks.background(
+            detect_devices,
+            lambda detection: self._apply_device_refresh_result(
+                request_id, detection.devices, detection.harmony_error, detection.android_error),
+            lambda error: self._apply_device_refresh_error(request_id, error),
+        )
 
     def refresh_devices_and_packages(self) -> None:
         self.refresh_devices()
         self.scan_latest_packages()
-
-    def _refresh_devices_worker(self, request_id: int) -> None:
-        try:
-            detection = detect_devices()
-        except Exception as error:
-            self.after(0, self._apply_device_refresh_error, request_id, error)
-            return
-        self.after(
-            0, self._apply_device_refresh_result, request_id,
-            detection.devices, detection.harmony_error, detection.android_error,
-        )
 
     def _apply_device_refresh_result(
         self,
@@ -160,6 +152,8 @@ class App(tk.Tk):
         if request_id != self._latest_refresh_request_id:
             return
         self._last_device_refresh_snapshot = None
+        # The kept list is stale, so its "only" device may not be the only one.
+        self.last_probe_failed = True
         self.log(f"刷新设备列表失败：{error}")
         self._set_refresh_state(False)
 
@@ -182,6 +176,7 @@ class App(tk.Tk):
         )
         log_result = bool(probe_errors) or snapshot != self._last_device_refresh_snapshot or summary_label != "设备列表已刷新"
         self._last_device_refresh_snapshot = snapshot
+        self.last_probe_failed = bool(probe_errors)
         current_device_ids = {device.device_id for device in devices}
         requested_selection = set(
             self.device_tree.selection()
@@ -266,86 +261,76 @@ class App(tk.Tk):
         current_name = self._device_name_mapping().get(device_id, "")
         self.name_var.set(current_name)
 
-    def _single_selected_or_only_device_id(self) -> Optional[str]:
-        selection = self.device_tree.selection()
-        if len(selection) == 1:
-            return selection[0]
-        if not selection and len(self.devices) == 1:
-            return self.devices[0].device_id
-        return None
+    def _target_device(self) -> Optional[DeviceInfo]:
+        """The single device an action applies to (see controller.resolve_target)."""
+        return resolve_target(self.device_tree.selection(), self.devices,
+                              auto_select=not self.last_probe_failed)
+
+    def _device_for_task(self, name: str, missing_message: str) -> Optional[DeviceInfo]:
+        """Shared guards for single-device tasks: nothing running, one target."""
+        if self.tasks.busy:
+            self.log(f"{self.tasks.current.label}进行中，请稍候")
+            return None
+        device = self._target_device()
+        if device is None:
+            messagebox.showwarning("提示", missing_message)
+            self.log(f"获取{name}失败：{missing_message}")
+        return device
 
     def copy_selected_device_id(self) -> None:
-        device_id = self._single_selected_or_only_device_id()
-        if not device_id:
+        device = self._target_device()
+        if not device:
             messagebox.showwarning("提示", "请选择一个设备复制设备码")
             self.log("复制设备码失败：请选择一个设备")
             return
         self.clipboard_clear()
-        self.clipboard_append(device_id)
-        self.log(f"已复制设备码: {self._device_label(device_id)}")
+        self.clipboard_append(device.device_id)
+        self.log(f"已复制设备码: {self._device_label(device.device_id)}")
 
     def fetch_hdc_udid(self) -> None:
-        if self.udid_fetching:
-            self.log("获取 UDID 中：请稍候")
-            return
-        selection = self.device_tree.selection()
-        if len(selection) != 1:
-            messagebox.showwarning("提示", "请选择一个 Harmony 设备")
-            self.log("获取 UDID 失败：请选择一个 Harmony 设备")
-            return
-        device_id = selection[0]
-        device = next((d for d in self.devices if d.device_id == device_id), None)
-        device_label = self._device_label(device_id)
+        device = self._device_for_task(" UDID ", "请选择一个 Harmony 设备")
         if not device:
-            messagebox.showwarning("提示", "设备信息不存在，请先刷新设备")
-            self.log(f"获取 UDID 失败：设备 {device_label} 信息不存在")
             return
+        device_id = device.device_id
         driver = driver_for(device.platform)
         if driver is None or not driver.supports_udid:
             platform_label = driver.label if driver else device.platform
             messagebox.showwarning("提示", "仅支持 NEXT 设备获取 UDID")
-            self.log(f"获取 UDID 失败：设备 {device_label} 为 {platform_label}，仅支持 NEXT")
+            self.log(f"获取 UDID 失败：设备 {self._device_label(device_id)} 为 {platform_label}，仅支持 NEXT")
             return
-        self._set_udid_fetch_state(True)
-        self.log(f"开始获取设备 UDID: {device_label}")
-        threading.Thread(target=self._fetch_hdc_udid_worker, args=(device_id, driver), daemon=True).start()
+        task = self.tasks.start("udid", "UDID")
+        self.log(f"开始获取设备 UDID: {self._device_label(device_id)}")
+        self.tasks.run(
+            task, lambda: driver.udid(device_id, cancel=task.cancel),
+            lambda udid: self._apply_hdc_udid_result(task, device_id, udid),
+            lambda error: self._apply_hdc_udid_error(task, device_id, error),
+        )
 
-    def _fetch_hdc_udid_worker(self, device_id: str, driver: PlatformDriver) -> None:
-        try:
-            udid = driver.udid(device_id)
-        except Exception as error:
-            self.after(0, self._apply_hdc_udid_error, device_id, error)
+    def _apply_hdc_udid_error(self, task: Task, device_id: str, error: Exception) -> None:
+        if task.cancelled:
+            self._end_task(task, "获取 UDID 已中止", status="已中止")
             return
-        self.after(0, self._apply_hdc_udid_result, device_id, udid)
-
-    def _apply_hdc_udid_error(self, device_id: str, error: Exception) -> None:
-        self._set_udid_fetch_state(False)
         message = f"获取 UDID 失败：设备 {self._device_label(device_id)}，{error}"
-        self.log(message)
+        self._end_task(task, message, ok=False)
         messagebox.showwarning("提示", message)
 
-    def _apply_hdc_udid_result(self, device_id: str, udid: Optional[str]) -> None:
-        self._set_udid_fetch_state(False)
+    def _apply_hdc_udid_result(self, task: Task, device_id: str, udid: Optional[str]) -> None:
         device_label = self._device_label(device_id)
         if not udid:
+            self._end_task(task, f"获取 UDID 失败：设备 {device_label} 未返回 UDID", ok=False)
             messagebox.showwarning("提示", f"未获取到设备 {device_label} 的 UDID")
-            self.log(f"获取 UDID 失败：设备 {device_label} 未返回 UDID")
             return
         self.clipboard_clear()
         self.clipboard_append(udid)
-        self.log(f"已获取设备 UDID（已复制到剪贴板）: {device_label} -> {udid}")
+        self._end_task(task, f"已获取设备 UDID（已复制到剪贴板）: {device_label} -> {udid}")
         messagebox.showinfo("UDID", f"设备 {device_label} 的 UDID：\n{udid}\n\n已复制到剪贴板")
 
     def save_device_name(self) -> None:
-        selection = self.device_tree.selection()
-        if len(selection) != 1:
-            if len(self.devices) == 1:
-                device_id = self.devices[0].device_id
-            else:
-                messagebox.showwarning("提示", "请选择一个设备进行命名")
-                return
-        else:
-            device_id = selection[0]
+        device = self._target_device()
+        if not device:
+            messagebox.showwarning("提示", "请选择一个设备进行命名")
+            return
+        device_id = device.device_id
         name = self.name_var.get().strip()
         self.config_manager.set_device_name(device_id, name)
         self.device_tree.set(device_id, "name", name)
@@ -519,8 +504,9 @@ class App(tk.Tk):
         self._update_package_summary()
 
     def install_to_selected(self) -> None:
-        if self.installing:
-            self.request_stop_install()
+        # The primary button doubles as "stop" for whichever device task is running.
+        if self.tasks.busy:
+            self.cancel_current_task()
             return
         if not self.latest_apk and not self.latest_hap:
             messagebox.showwarning("提示", "未找到可安装的 APK/HAP")
@@ -542,77 +528,58 @@ class App(tk.Tk):
             f"设备={selected_device_text}，APK={apk_text}，HAP={hap_text}"
         )
         self.log("开始安装前设备校验")
-        self._set_install_state(True)
-        threading.Thread(
-            target=self._prepare_install_worker,
-            args=(previous_selection, selected_apk, selected_hap, allow_test),
-            daemon=True,
-        ).start()
+        task = self.tasks.start("install", "安装", verb="")
 
-    def _prepare_install_worker(
-        self,
-        previous_selection: Set[str],
-        selected_apk: Optional[Path],
-        selected_hap: Optional[Path],
-        allow_test: bool,
-    ) -> None:
-        started_at = time.perf_counter()
-        try:
-            detection = detect_devices()
-        except Exception as error:
-            self.after(0, self._apply_install_preparation_error, error)
-            return
-        duration_seconds = time.perf_counter() - started_at
-        self.after(
-            0,
-            self._finalize_install,
-            detection.devices,
-            previous_selection,
-            selected_apk,
-            selected_hap,
-            allow_test,
-            duration_seconds,
-            detection.harmony_error,
-            detection.android_error,
+        def preflight():
+            started_at = time.perf_counter()
+            detection = detect_devices(cancel=task.cancel)
+            return detection, time.perf_counter() - started_at
+
+        self.tasks.run(
+            task, preflight,
+            lambda result: self._finalize_install(
+                task, result[0], previous_selection, selected_apk, selected_hap, allow_test, result[1]),
+            lambda error: self._apply_install_preparation_error(task, error),
         )
 
-    def _apply_install_preparation_error(self, error: Exception) -> None:
+    def _apply_install_preparation_error(self, task: Task, error: Exception) -> None:
         self._last_device_refresh_snapshot = None
-        self._finish_install("安装异常")
+        self._end_task(task, "安装异常", status="安装异常")
         self.log(f"安装前设备校验失败：{error}")
         messagebox.showwarning("安装异常", f"安装前设备校验失败：{error}")
 
     def _finalize_install(
         self,
-        devices: List[DeviceInfo],
+        task: Task,
+        detection,
         previous_selection: Set[str],
         selected_apk: Optional[Path],
         selected_hap: Optional[Path],
         allow_test: bool,
         validation_duration_seconds: float = 0.0,
-        harmony_error: Optional[str] = None,
-        android_error: Optional[str] = None,
     ) -> None:
-        failed_platforms = {
-            platform for platform, error in (("android", android_error), ("harmony", harmony_error)) if error
-        }
+        if task.cancelled:
+            self._end_task(task, "安装已中止", status="已中止")
+            return
+        errors = {"android": detection.android_error, "harmony": detection.harmony_error}
+        failed_platforms = {platform for platform, error in errors.items() if error}
         if failed_platforms:
             # Only devices of a platform whose probe succeeded can be re-verified;
             # never let a failed probe redirect the install to other devices.
             verifiable_ids = {d.device_id for d in self.devices if d.platform not in failed_platforms}
             if not previous_selection or previous_selection - verifiable_ids:
-                message = "\n".join(error for error in (android_error, harmony_error) if error)
-                self._apply_install_preparation_error(RuntimeError(message))
+                message = "\n".join(error for error in errors.values() if error)
+                self._apply_install_preparation_error(task, RuntimeError(message))
                 return
         self._apply_device_refresh(
-            devices,
+            detection.devices,
             previous_selection,
             summary_label=(
                 "安装前设备校验完成"
                 f"（耗时 {validation_duration_seconds:.2f} 秒）"
             ),
-            harmony_error=harmony_error,
-            android_error=android_error,
+            harmony_error=detection.harmony_error,
+            android_error=detection.android_error,
         )
         current_device_ids = {device.device_id for device in self.devices}
         missing_devices = previous_selection - current_device_ids
@@ -633,34 +600,53 @@ class App(tk.Tk):
                 self.log(f"检测到单设备，默认安装到: {self._device_label(selection_list[0])}")
             else:
                 messagebox.showwarning("提示", "请先选择设备")
-                self.log("安装失败：未选择设备")
-                self.install_status_var.set("就绪")
-                self._set_install_state(False)
+                self._end_task(task, "安装失败：未选择设备", status="就绪")
                 return
-        threading.Thread(
-            target=self._install_worker,
-            args=(selection_list, selected_apk, selected_hap, allow_test),
-            daemon=True,
-        ).start()
+        # Frozen here, on the UI thread: a refresh during the install cannot
+        # change which devices get which package.
+        plan = build_install_plan(selection_list, self.devices, {"APK": selected_apk, "HAP": selected_hap},
+                                  self._device_label)
+        self.tasks.run(
+            task, lambda: run_install_plan(plan, allow_test, task.cancel, self._log_threadsafe),
+            lambda outcome: self._end_task(task, outcome.status, status=outcome.status),
+            lambda error: self._apply_install_error(task, error),
+        )
 
-    def _set_install_state(self, installing: bool) -> None:
-        self.installing = installing
-        if installing:
-            self.install_stop_event.clear()
-            self.install_button.config(state=tk.NORMAL, text="中止安装")
-            self.install_status_var.set("安装中")
-        else:
-            self.install_button.config(state=tk.NORMAL, text="安装到所选设备")
-            if self.install_status_var.get() == "正在中止":
-                self.install_status_var.set("已中止")
-            elif self.install_status_var.get() == "安装中":
-                self.install_status_var.set("安装完成")
-        self._update_device_actions()
+    def _apply_install_error(self, task: Task, error: Exception) -> None:
+        self.log(f"安装线程异常: {error}")
+        self._end_task(task, "安装异常", status="安装异常")
 
-    def _finish_install(self, status: str) -> None:
+    def _end_task(self, task: Task, message: str, ok: bool = True, status: Optional[str] = None) -> None:
+        """Log the outcome and leave a final status; the runner then frees the slot."""
+        if status is None:
+            # Stop only counts when it interrupted the work; a result that
+            # already arrived is reported as it is.
+            status = f"{task.label}{'完成' if ok else '失败'}"
         self.install_status_var.set(status)
-        self._set_install_state(False)
-        self.log(status)
+        self.log(message)
+
+    def cancel_current_task(self) -> None:
+        task = self.tasks.current
+        if task and self.tasks.cancel():
+            self._log_threadsafe(f"已请求中止{task.label}")
+
+    def _on_task_change(self) -> None:
+        """Render the device task slot: status line, primary button, busy labels."""
+        task = self.tasks.current
+        if task:
+            self.install_status_var.set("正在中止" if task.cancelled else f"{task.label}中")
+            self.install_button.config(
+                state=tk.DISABLED if task.cancelled else tk.NORMAL,
+                text="正在中止…" if task.cancelled else f"中止{task.label}",
+            )
+        else:
+            # The status text is the finished task's outcome, set by _end_task.
+            self.install_button.config(state=tk.NORMAL, text="安装到所选设备")
+        action = task.action if task else None
+        self.udid_button.config(text="获取UDID中…" if action == "udid" else "获取UDID")
+        self.crash_log_button.config(text="获取崩溃日志中…" if action == "crash_log" else "获取崩溃日志")
+        self.app_log_button.config(text=f"{task.label}中…" if action == "app_log" else "获取APP日志")
+        self._update_device_actions()
 
     def _set_refresh_state(self, refreshing: bool) -> None:
         self.refreshing = refreshing
@@ -669,30 +655,11 @@ class App(tk.Tk):
         self.scan_button.config(state=state, text="刷新中…" if refreshing else "扫描最新包")
         self._update_device_actions()
 
-    def _set_udid_fetch_state(self, fetching: bool) -> None:
-        self.udid_fetching = fetching
-        self.udid_button.config(text="获取UDID中…" if fetching else "获取UDID")
-        self._update_device_actions()
-
-    def _set_crash_log_fetch_state(self, fetching: bool, operation: str = "崩溃日志") -> None:
-        self.crash_log_fetching = fetching
-        self.log_operation = operation if fetching else ""
-        self.crash_log_button.config(
-            text="获取崩溃日志中…" if fetching and operation == "崩溃日志" else "获取崩溃日志"
-        )
-        app_log_operation = operation in {
-            target.display_name for driver in DRIVERS.values() for target in driver.app_log_targets.values()
-        }
-        self.app_log_button.config(
-            text=f"获取{operation}中…" if fetching and app_log_operation else "获取APP日志"
-        )
-        self._update_device_actions()
-
     def _update_device_actions(self) -> None:
-        selection = self.device_tree.selection()
-        device = next((d for d in self.devices if len(selection) == 1 and d.device_id == selection[0]), None)
+        # Same rule as the actions themselves: one selected, or the only device.
+        device = self._target_device()
         driver = driver_for(device.platform) if device else None
-        busy = self.refreshing or self.installing or self.udid_fetching or self.crash_log_fetching
+        busy = self.refreshing or self.tasks.busy
 
         def state(capable: bool) -> str:
             return tk.NORMAL if capable and not busy else tk.DISABLED
@@ -714,69 +681,60 @@ class App(tk.Tk):
             self.after(0, self._append_log_entry, timestamp, message)
 
     def fetch_crash_log(self) -> None:
-        if self.crash_log_fetching:
-            self.log("获取崩溃日志中：请稍候")
-            return
-        selection = self.device_tree.selection()
-        if len(selection) != 1:
-            messagebox.showwarning("提示", "请选择一个设备")
-            self.log("获取崩溃日志失败：请选择一个设备")
-            return
-        device_id = selection[0]
-        device = next((d for d in self.devices if d.device_id == device_id), None)
-        device_label = self._device_label(device_id)
+        device = self._device_for_task("崩溃日志", "请选择一个设备")
         if not device:
-            messagebox.showwarning("提示", "设备信息不存在，请先刷新设备")
-            self.log(f"获取崩溃日志失败：设备 {device_label} 信息不存在")
             return
+        device_id = device.device_id
         driver = driver_for(device.platform)
         if driver is None:
             messagebox.showwarning("提示", "仅支持 Android 或 Harmony 设备")
-            self.log(f"获取崩溃日志失败：设备 {device_label} 平台不支持")
+            self.log(f"获取崩溃日志失败：设备 {self._device_label(device_id)} 平台不支持")
             return
         output_dir = self._get_log_output_dir()
-        self._set_crash_log_fetch_state(True)
-        self.log(f"开始获取{driver.crash_log_description}: {device_label} -> {driver.crash_log_destination(output_dir)}")
-        threading.Thread(
-            target=self._fetch_crash_log_worker,
-            args=(device_id, driver, output_dir),
-            daemon=True,
-        ).start()
+        task = self.tasks.start("crash_log", "崩溃日志")
+        self.log(f"开始获取{driver.crash_log_description}: {self._device_label(device_id)} -> "
+                 f"{driver.crash_log_destination(output_dir)}")
+        self.tasks.run(
+            task, lambda: driver.collect_crash_log(device_id, output_dir, cancel=task.cancel),
+            lambda result: self._apply_crash_log_result(task, device_id, driver, result),
+            lambda error: self._apply_log_collection_error(task, device_id, error),
+        )
 
-    def _fetch_crash_log_worker(self, device_id: str, driver: PlatformDriver, output_dir: Path) -> None:
-        try:
-            result = driver.collect_crash_log(device_id, output_dir)
-        except Exception as error:
-            self.after(0, self._apply_log_collection_error, "获取崩溃日志", device_id, error)
-            return
-        self.after(0, self._apply_crash_log_result, device_id, driver, result)
-
-    def _apply_log_collection_error(self, operation: str, device_id: str, error: Exception) -> None:
-        self._set_crash_log_fetch_state(False)
+    def _apply_log_collection_error(self, task: Task, device_id: str, error: Exception) -> None:
         device_label = self._device_label(device_id)
-        messagebox.showwarning("提示", f"{operation}失败，设备 {device_label}: {error}")
-        self.log(f"{operation}失败：设备 {device_label}\n{error}")
+        if task.cancelled:
+            self._end_task(task, f"{task.label}已中止：设备 {device_label}", status="已中止")
+            return
+        self._end_task(task, f"{task.label}失败：设备 {device_label}\n{error}", ok=False)
+        messagebox.showwarning("提示", f"{task.label}失败，设备 {device_label}: {error}")
 
-    def _apply_crash_log_result(self, device_id: str, driver: PlatformDriver, result: CollectResult) -> None:
-        self._set_crash_log_fetch_state(False)
+    def _apply_crash_log_result(self, task: Task, device_id: str, driver: PlatformDriver,
+                                result: CollectResult) -> None:
         device_label = self._device_label(device_id)
         process = result.process
         self.log(f"{driver.label} {device_label} 崩溃日志命令: {format_command_for_log(result.command)}")
         if process.returncode != 0:
+            if task.cancelled:
+                self._end_task(task, f"获取崩溃日志已中止：设备 {device_label}", status="已中止")
+                return
+            self._end_task(task, f"获取崩溃日志失败：设备 {device_label} 返回码 {process.returncode}\n"
+                                 f"{process.stderr}", ok=False)
             messagebox.showwarning("提示", f"获取崩溃日志失败，设备 {device_label} 返回码: {process.returncode}")
-            self.log(f"获取崩溃日志失败：设备 {device_label} 返回码 {process.returncode}\n{process.stderr}")
             return
         if result.zip_path:
+            self._end_task(task, f"获取崩溃日志成功：设备 {device_label}，共 {result.file_count} 个文件，"
+                                 f"ZIP: {result.zip_path}")
             messagebox.showinfo("提示", f"已打包{driver.crash_log_description}：{result.zip_path}")
-            self.log(f"获取崩溃日志成功：设备 {device_label}，共 {result.file_count} 个文件，ZIP: {result.zip_path}")
             return
         if result.appended_to:
+            self._end_task(task, f"获取崩溃日志成功：设备 {device_label}，输出已追加到 {result.appended_to}")
             messagebox.showinfo("提示", f"已写入崩溃日志：{result.appended_to}")
-            self.log(f"获取崩溃日志成功：设备 {device_label}，输出已追加到 {result.appended_to}")
             return
         diagnostics = (process.stderr or process.stdout or "").strip()
-        messagebox.showwarning("提示", f"未获取到{driver.crash_log_description}" + (f"：{diagnostics}" if diagnostics else ""))
-        self.log(f"获取崩溃日志完成但无输出：设备 {device_label}" + (f"\n{diagnostics}" if diagnostics else ""))
+        self._end_task(task, f"获取崩溃日志完成但无输出：设备 {device_label}"
+                             + (f"\n{diagnostics}" if diagnostics else ""), ok=False)
+        messagebox.showwarning("提示", f"未获取到{driver.crash_log_description}"
+                               + (f"：{diagnostics}" if diagnostics else ""))
 
     def fetch_qiankun_log(self) -> None:
         self._fetch_harmony_app_log("qiankun")
@@ -788,175 +746,67 @@ class App(tk.Tk):
         target = next(
             driver.app_log_targets[target_key] for driver in DRIVERS.values() if target_key in driver.app_log_targets
         )
-        if self.crash_log_fetching:
-            self.log(f"日志任务进行中：{self.log_operation or '日志'}，请稍候")
-            return
-        selection = self.device_tree.selection()
-        if len(selection) != 1:
-            messagebox.showwarning("提示", "请选择一个 Harmony 设备")
-            self.log(f"获取{target.display_name}失败：请选择一个 Harmony 设备")
-            return
-        device_id = selection[0]
-        device = next((d for d in self.devices if d.device_id == device_id), None)
-        device_label = self._device_label(device_id)
+        device = self._device_for_task(target.display_name, "请选择一个 Harmony 设备")
         if not device:
-            messagebox.showwarning("提示", "设备信息不存在，请先刷新设备")
-            self.log(f"获取{target.display_name}失败：设备 {device_label} 信息不存在")
             return
+        device_id = device.device_id
         driver = driver_for(device.platform)
         if driver is None or target_key not in driver.app_log_targets:
             messagebox.showwarning("提示", "仅支持 Harmony 设备")
-            self.log(f"获取{target.display_name}失败：设备 {device_label} 非 Harmony")
+            self.log(f"获取{target.display_name}失败：设备 {self._device_label(device_id)} 非 Harmony")
             return
         output_dir = self._get_log_output_dir()
-        self._set_crash_log_fetch_state(True, target.display_name)
+        task = self.tasks.start("app_log", target.display_name)
         self.log(
-            f"开始获取{target.display_name}: {device_label} · "
+            f"开始获取{target.display_name}: {self._device_label(device_id)} · "
             f"{target.remote_path} -> {output_dir}"
         )
-        threading.Thread(
-            target=self._fetch_harmony_app_log_worker,
-            args=(device_id, output_dir, target_key, driver),
-            daemon=True,
-        ).start()
+        self.tasks.run(
+            task, lambda: driver.collect_app_log(device_id, output_dir, target_key, cancel=task.cancel),
+            lambda result: self._apply_harmony_app_log_result(task, device_id, target, result),
+            lambda error: self._apply_log_collection_error(task, device_id, error),
+        )
 
-    def _fetch_harmony_app_log_worker(
-        self,
-        device_id: str,
-        output_dir: Path,
-        target_key: str,
-        driver: PlatformDriver,
-    ) -> None:
-        target = driver.app_log_targets[target_key]
-        try:
-            result = driver.collect_app_log(device_id, output_dir, target_key)
-        except Exception as error:
-            self.after(0, self._apply_log_collection_error, f"获取{target.display_name}", device_id, error)
-            return
-        self.after(0, self._apply_harmony_app_log_result, device_id, target, result)
-
-    def _apply_harmony_app_log_result(self, device_id: str, target, result: CollectResult) -> None:
+    def _apply_harmony_app_log_result(self, task: Task, device_id: str, target, result: CollectResult) -> None:
         command, zip_path, file_count = result.command, result.zip_path, result.file_count
         returncode, stdout, stderr = result.process.returncode, result.process.stdout, result.process.stderr
-        self._set_crash_log_fetch_state(False)
         device_label = self._device_label(device_id)
         self.log(f"{target.display_name}命令: {format_command_for_log(command)}")
         diagnostics = "\n".join(part for part in (stdout.strip(), stderr.strip()) if part)
         if returncode != 0:
+            if task.cancelled:
+                self._end_task(task, f"获取{target.display_name}已中止：设备 {device_label}", status="已中止")
+                return
+            self._end_task(
+                task,
+                f"获取{target.display_name}失败：设备 {device_label} 返回码 {returncode}"
+                + (f"\n{diagnostics}" if diagnostics else ""),
+                ok=False,
+            )
             messagebox.showwarning(
                 "提示",
                 f"获取{target.display_name}失败，设备 {device_label} 返回码: {returncode}",
             )
-            self.log(
-                f"获取{target.display_name}失败：设备 {device_label} 返回码 {returncode}"
-                + (f"\n{diagnostics}" if diagnostics else "")
-            )
             return
         if not zip_path:
+            self._end_task(
+                task,
+                f"获取{target.display_name}完成但无输出：设备 {device_label}；"
+                f"远端={target.remote_path}"
+                + (f"\n{diagnostics}" if diagnostics else ""),
+                ok=False,
+            )
             messagebox.showwarning(
                 "提示",
                 f"{target.display_name}未拉取到文件，请检查应用是否安装及目标目录是否存在",
             )
-            self.log(
-                f"获取{target.display_name}完成但无输出：设备 {device_label}；"
-                f"远端={target.remote_path}"
-                + (f"\n{diagnostics}" if diagnostics else "")
-            )
             return
-        messagebox.showinfo("提示", f"已打包{target.display_name}：{zip_path}")
-        self.log(
+        self._end_task(
+            task,
             f"获取{target.display_name}成功：设备 {device_label}，"
-            f"共 {file_count} 个文件，ZIP: {zip_path}"
+            f"共 {file_count} 个文件，ZIP: {zip_path}",
         )
-
-    def _install_worker(
-        self,
-        selection: List[str],
-        selected_apk: Optional[Path],
-        selected_hap: Optional[Path],
-        allow_test: bool,
-    ) -> None:
-        self._log_threadsafe(f"开始安装到所选设备: {self._device_labels_for_log(selection)}")
-        cancelled_by_user = False
-        install_failed = False
-        failed_commands = 0
-        skipped_targets = 0
-        packages = {"APK": selected_apk, "HAP": selected_hap}
-        try:
-            for device_id in selection:
-                device_label = self._device_label(device_id)
-                if self.install_stop_event.is_set():
-                    cancelled_by_user = True
-                    self._log_threadsafe("安装已中止")
-                    break
-                device = next((d for d in self.devices if d.device_id == device_id), None)
-                if not device:
-                    skipped_targets += 1
-                    self._log_threadsafe(f"{device_label}: 设备信息未找到，跳过")
-                    continue
-                driver = driver_for(device.platform)
-                package = packages.get(driver.package_kind) if driver else None
-                if not package:
-                    skipped_targets += 1
-                    kind = driver.package_kind if driver else "可安装包"
-                    self._log_threadsafe(f"{device_label}: 未找到 {kind}，跳过")
-                    continue
-                # Resolve the tool once: the logged command is the executed command.
-                command = driver.install_command(device_id, package, allow_test=allow_test)
-                self._log_threadsafe(
-                    f"{driver.label} {device_label} 开始执行命令: {format_command_for_log(command)}"
-                )
-                result = driver.install(command, self.install_stop_event)
-                self._log_install_result(driver.label, device_label, result)
-                if self.install_stop_event.is_set():
-                    cancelled_by_user = True
-                    self._log_threadsafe(f"{device_label}: 安装已中止")
-                    break
-                if result.failure_reason:
-                    failed_commands += 1
-        except Exception as error:
-            install_failed = True
-            self._log_threadsafe(f"安装线程异常: {error}")
-        finally:
-            if install_failed:
-                status = "安装异常"
-            elif cancelled_by_user:
-                status = "已中止"
-            elif failed_commands:
-                status = "安装失败"
-            elif skipped_targets:
-                status = "安装未完成"
-            else:
-                status = "安装完成"
-            self.after(0, self._finish_install, status)
-
-    def _log_install_result(
-        self,
-        platform: str,
-        device_label: str,
-        result: InstallResult,
-    ) -> None:
-        self._log_threadsafe(
-            f"{platform} {device_label} 安装结果: {result.process.returncode}，"
-            f"耗时 {result.duration_seconds:.2f} 秒"
-        )
-        for line in (result.process.stdout or "").splitlines():
-            self._log_threadsafe(f"{platform} {device_label} 输出: {line}")
-        # stderr is an output channel, not proof that the install failed.
-        failure_reason = result.failure_reason
-        stderr_label = "错误输出 [stderr]" if failure_reason else "输出 [stderr]"
-        for line in (result.process.stderr or "").splitlines():
-            self._log_threadsafe(f"{platform} {device_label} {stderr_label}: {line}")
-        if failure_reason and result.process.returncode == 0:
-            self._log_threadsafe(f"{platform} {device_label} 判定安装失败：{failure_reason}")
-
-    def request_stop_install(self) -> None:
-        if not self.installing:
-            return
-        self.install_stop_event.set()
-        self.install_button.config(state=tk.DISABLED, text="正在中止…")
-        self.install_status_var.set("正在中止")
-        self._log_threadsafe("已请求中止安装")
+        messagebox.showinfo("提示", f"已打包{target.display_name}：{zip_path}")
 
 
 if __name__ == "__main__":

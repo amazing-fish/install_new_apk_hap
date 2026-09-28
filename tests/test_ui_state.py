@@ -7,7 +7,6 @@ from tkinter import font as tkfont
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-import main
 from platforms import DeviceInfo
 from services.package_metadata import PackageLabel
 
@@ -110,25 +109,15 @@ def test_scan_dropdown_changes_and_empty_directory_reset(app, tmp_path):
     assert str(app.hap_combo.cget("state")) == "disabled"
 
 
-def test_package_display_changes_do_not_mutate_install_click_snapshot(app, monkeypatch):
+def test_package_display_changes_do_not_mutate_install_click_snapshot(app, deferred_tasks, preflight, install_plans):
     devices = [DeviceInfo("a", "android", "device"), DeviceInfo("h", "harmony", "device")]
     app._apply_device_refresh(devices)
     app.device_tree.selection_set("a", "h")
     original_apk, original_hap = Path("original.apk"), Path("original.hap")
     app.latest_apk, app.latest_hap = original_apk, original_hap
     app._package_labels = {original_apk: PackageLabel("Original", "resolved", test_only=True)}
-    scheduled = []
-
-    class DeferredThread:
-        def __init__(self, *, target, args, daemon):
-            self.target, self.args = target, args
-
-        def start(self):
-            scheduled.append(self)
-
-    monkeypatch.setattr(main.threading, "Thread", DeferredThread)
+    preflight(devices)
     app.install_to_selected()
-    snapshot = scheduled[0].args
     app.apk_name_map = {"next.apk": Path("next.apk")}
     app.apk_var.set("next.apk")
     app.on_apk_selected(None)
@@ -139,8 +128,8 @@ def test_package_display_changes_do_not_mutate_install_click_snapshot(app, monke
     app.update()
     assert app.package_summary_var.get() == "APK next.apk · HAP next.hap"
 
-    app._finalize_install(devices, *snapshot)
-    assert scheduled[1].args == (["a", "h"], original_apk, original_hap, True)
+    deferred_tasks.run_all()
+    assert install_plans == [([("a", original_apk), ("h", original_hap)], True)]
     assert_selection_labels(app, "已选 2 台：a，h")
     assert app.package_summary_var.get() == "APK next.apk · HAP next.hap"
 

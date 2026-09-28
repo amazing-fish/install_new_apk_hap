@@ -14,8 +14,8 @@ class AndroidDriver(PlatformDriver):
     crash_log_description = "Android 崩溃日志"
     tool_error = AdbError
 
-    def detect(self) -> List[DeviceInfo]:
-        output = run_probe([resolve_adb_executable(), "devices", "-l"], AdbError, "adb")
+    def detect(self, cancel: Optional[threading.Event] = None) -> List[DeviceInfo]:
+        output = run_probe([resolve_adb_executable(), "devices", "-l"], AdbError, "adb", cancel=cancel)
         devices = []
         for line in parse_device_lines(output, skip=lambda line: line.startswith("List of devices")):
             parts = line.split()
