@@ -9,14 +9,6 @@ from platforms import DeviceInfo
 from platforms.base import CollectResult
 
 
-class ImmediateThread:
-    def __init__(self, *, target, args, daemon):
-        self.target, self.args = target, args
-
-    def start(self):
-        self.target(*self.args)
-
-
 @pytest.fixture
 def dialogs(monkeypatch):
     shown = []
@@ -45,8 +37,6 @@ def test_crash_log_uses_driver_and_reports_by_result(app, monkeypatch, dialogs, 
         return CollectResult(command, subprocess.CompletedProcess(command, returncode, '', 'diag'), **result_kwargs)
 
     monkeypatch.setattr(driver, 'collect_crash_log', collect)
-    monkeypatch.setattr(main.threading, 'Thread', ImmediateThread)
-    app.after = lambda _delay, callback, *args: callback(*args)
 
     app.fetch_crash_log()
 
@@ -56,7 +46,8 @@ def test_crash_log_uses_driver_and_reports_by_result(app, monkeypatch, dialogs, 
     assert f'开始获取{driver.crash_log_description}' in log
     assert f'{driver.label} d 崩溃日志命令: tool d' in log
     assert log_text in log
-    assert not app.crash_log_fetching
+    assert not app.tasks.busy
+    assert app.crash_log_button.cget('text') == '获取崩溃日志'
 
 
 def test_udid_is_offered_only_by_capable_drivers(app, monkeypatch, dialogs):
@@ -64,10 +55,10 @@ def test_udid_is_offered_only_by_capable_drivers(app, monkeypatch, dialogs):
     app.device_tree.selection_set('a')
     app.on_device_select(None)
     started = []
-    monkeypatch.setattr(main.threading, 'Thread', lambda **kwargs: started.append(kwargs))
+    app.tasks.spawn = started.append
 
     app.fetch_hdc_udid()
 
-    assert not started
+    assert not started and not app.tasks.busy
     assert dialogs[-1][:3] == ('warning', '提示', '仅支持 NEXT 设备获取 UDID')
     assert '为 Android，仅支持 NEXT' in app.log_text.get('1.0', 'end')

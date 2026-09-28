@@ -31,8 +31,8 @@ CRASH_LOG_REMOTE_DIR = "/data/log/faultlog/faultlogger"
 CRASH_LOG_DAYS = 7
 
 
-def _hdc_probe(command: List[str]) -> str:
-    return run_probe(command, HdcError, "HDC", fail_marker="[Fail]")
+def _hdc_probe(command: List[str], cancel: Optional[threading.Event] = None) -> str:
+    return run_probe(command, HdcError, "HDC", fail_marker="[Fail]", cancel=cancel)
 
 
 def _zip(files: List[Path], base: Path, zip_path: Path) -> None:
@@ -59,8 +59,8 @@ class HarmonyDriver(PlatformDriver):
         # allow_test is an adb concept; HAP installs have no equivalent flag.
         return [executable or resolve_hdc_executable(), "-t", device_id, "install", str(package)]
 
-    def udid(self, device_id: str) -> Optional[str]:
-        output = _hdc_probe([resolve_hdc_executable(), "-t", device_id, "shell", "bm", "get", "--udid"])
+    def udid(self, device_id: str, cancel: Optional[threading.Event] = None) -> Optional[str]:
+        output = _hdc_probe([resolve_hdc_executable(), "-t", device_id, "shell", "bm", "get", "--udid"], cancel)
         lines = [line.strip() for line in output.splitlines() if line.strip()]
         return lines[-1] if lines else None
 

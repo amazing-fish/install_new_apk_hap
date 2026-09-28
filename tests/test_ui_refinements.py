@@ -58,6 +58,8 @@ def test_unchanged_refresh_does_not_append_logs(app, tmp_path, monkeypatch):
         def start(self):
             pass
     monkeypatch.setattr(main.threading, 'Thread', DeferredThread)
+    refreshes = []
+    app.tasks.spawn = refreshes.append
     for index in range(3):
         REFRESH_DEVICES(app)
         app.scan_latest_packages()
@@ -68,7 +70,7 @@ def test_unchanged_refresh_does_not_append_logs(app, tmp_path, monkeypatch):
         else:
             assert app.log_text.get('1.0', 'end') == first
     # Linked device refreshes remain distinct; metadata uses one shared worker.
-    assert sum(target.__self__ is app for target, _args in calls) == 3
+    assert len(refreshes) == 3
     assert sum(target.__self__ is app._package_label_loader for target, _args in calls) == 1
     # Equal filenames must not conceal replacement contents.
     apk.write_bytes(b'a rebuilt package with different size')
@@ -96,8 +98,12 @@ def test_refresh_error_recovery_and_log_clear_keep_visible_results(app, tmp_path
     app._apply_device_refresh([])
     assert app.log_text.get('1.0', 'end') != failed
     monkeypatch.setattr(main.messagebox, 'showwarning', lambda *args: None)
-    app._set_install_state(True)
-    app._apply_install_preparation_error(RuntimeError('preinstall probe failed'))
+    def broken_preflight():
+        raise RuntimeError('preinstall probe failed')
+    monkeypatch.setattr(main, 'detect_devices', broken_preflight)
+    app.latest_apk = tmp_path / 'demo.apk'
+    app.install_to_selected()
+    assert app.install_status_var.get() == '安装异常' and not app.tasks.busy
     failed = app.log_text.get('1.0', 'end')
     app._apply_device_refresh([])
     assert app.log_text.get('1.0', 'end') != failed
@@ -108,7 +114,7 @@ def test_refresh_error_recovery_and_log_clear_keep_visible_results(app, tmp_path
     assert '未找到' in app.log_text.get('1.0', 'end')
 
 @pytest.mark.parametrize('app', [1.0, 1.67, 2.0], indirect=True)
-def test_resize_and_busy_labels_keep_actions_in_natural_flow(app):
+def test_resize_and_busy_labels_keep_actions_in_natural_flow(app, deferred_tasks):
     from tkinter import font
     from ui_widgets import ActionRow
     show(app, 680)
@@ -119,7 +125,11 @@ def test_resize_and_busy_labels_keep_actions_in_natural_flow(app):
                 yield child
             yield from rows(child)
     for busy in (False, True, False):
-        app._set_crash_log_fetch_state(busy, 'NEXTdemo日志')
+        if busy:  # a long task name widens the busy menu button
+            task = app.tasks.start('app_log', 'NEXTdemo日志')
+            app.tasks.run(task, lambda: None, lambda _result: None, lambda _error: None)
+        else:
+            deferred_tasks.run_all()
         for width in (680, 610, 570, 540, 520, 500, 480, 501, 541, 611, 680):
             app.geometry(f'{width}x800')
             app.update()

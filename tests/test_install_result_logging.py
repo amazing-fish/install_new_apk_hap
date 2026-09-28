@@ -2,11 +2,13 @@
 import subprocess
 import threading
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
 import main
+from controller import build_install_plan, log_install_result, run_install_plan
+from platforms import DeviceInfo
+from platforms.base import InstallResult
 
 
 CASES = [
@@ -44,12 +46,11 @@ def test_install_result_logs_preserve_output_and_exit_status(
     platform, returncode, stdout, stderr, stdout_lines, stderr_lines,
 ):
     messages = []
-    app = SimpleNamespace(_log_threadsafe=messages.append)
     command = ["installer", "package"]
     process = subprocess.CompletedProcess(command, returncode, stdout, stderr)
-    result = main.InstallResult(command, process, 31.44)
+    result = InstallResult(command, process, 31.44)
 
-    main.App._log_install_result(app, platform, "mate70紫色", result)
+    log_install_result(platform, "mate70紫色", result, messages.append)
 
     prefix = f"{platform} mate70紫色"
     stderr_label = "输出 [stderr]" if returncode == 0 else "错误输出 [stderr]"
@@ -77,26 +78,17 @@ def test_worker_status_uses_returncode_not_output_channel(
     monkeypatch, platform, returncode, stdout, stderr, expected_status,
 ):
     messages = []
-    statuses = []
     command = ["installer", "package"]
-    result = main.InstallResult(
+    result = InstallResult(
         command, subprocess.CompletedProcess(command, returncode, stdout, stderr), 31.44,
     )
-    app = SimpleNamespace(
-        devices=[SimpleNamespace(device_id="device", platform=platform)],
-        install_stop_event=threading.Event(),
-        _device_label=lambda _device_id: "mate70紫色",
-        _device_labels_for_log=lambda _selection: "mate70紫色",
-        _log_threadsafe=messages.append,
-        _finish_install=statuses.append,
-        after=lambda _delay, callback, *args: callback(*args),
-    )
-    app._log_install_result = lambda *args: main.App._log_install_result(app, *args)
     for driver in main.DRIVERS.values():
         monkeypatch.setattr(driver, "install_command", lambda *_args, **_kwargs: command)
         monkeypatch.setattr(driver, "install", lambda *_args, **_kwargs: result)
+    plan = build_install_plan(["device"], [DeviceInfo("device", platform, "device")],
+                              {"APK": Path("app.apk"), "HAP": Path("app.hap")}, lambda _device_id: "mate70紫色")
 
-    main.App._install_worker(app, ["device"], Path("app.apk"), Path("app.hap"), False)
+    statuses = [run_install_plan(plan, False, threading.Event(), messages.append).status]
 
     assert statuses == [expected_status]
     assert not any("安装线程异常" in message for message in messages)
@@ -118,12 +110,12 @@ FAILURE_MARKER_CASES = [
 @pytest.mark.parametrize("stdout,stderr", FAILURE_MARKER_CASES)
 def test_zero_exit_with_explicit_failure_marker_is_a_failure(stdout, stderr):
     command = ["installer", "package"]
-    result = main.InstallResult(command, subprocess.CompletedProcess(command, 0, stdout, stderr), 1.0)
+    result = InstallResult(command, subprocess.CompletedProcess(command, 0, stdout, stderr), 1.0)
 
     assert result.failure_reason and result.failure_reason.startswith("输出包含失败标记")
 
     messages = []
-    main.App._log_install_result(SimpleNamespace(_log_threadsafe=messages.append), "Harmony", "d", result)
+    log_install_result("Harmony", "d", result, messages.append)
     assert messages[-1].startswith("Harmony d 判定安装失败：输出包含失败标记")
     assert not any(" 输出 [stderr]" in message for message in messages)
 
@@ -137,11 +129,11 @@ def test_zero_exit_with_explicit_failure_marker_is_a_failure(stdout, stderr):
 ])
 def test_successful_outputs_are_not_treated_as_failures(stdout, stderr):
     command = ["installer", "package"]
-    result = main.InstallResult(command, subprocess.CompletedProcess(command, 0, stdout, stderr), 1.0)
+    result = InstallResult(command, subprocess.CompletedProcess(command, 0, stdout, stderr), 1.0)
     assert result.failure_reason is None
 
 
 def test_nonzero_exit_reason_does_not_depend_on_output():
     command = ["installer", "package"]
-    result = main.InstallResult(command, subprocess.CompletedProcess(command, 1, "Success\n", ""), 1.0)
+    result = InstallResult(command, subprocess.CompletedProcess(command, 1, "Success\n", ""), 1.0)
     assert result.failure_reason == "返回码 1"

@@ -187,68 +187,43 @@ def test_apply_device_refresh_restores_explicit_multi_device_install_snapshot() 
     assert app.device_tree.selection() == ("android-a", "harmony-c")
 
 
-def test_finalize_install_restores_snapshot_and_keeps_target_order(monkeypatch) -> None:
-    app = make_app(
-        previous_device_ids={"android-a", "android-b", "harmony-c"},
-        selection=(),
-    )
+def test_preflight_restores_click_selection_and_keeps_target_order(app, monkeypatch, deferred_tasks, preflight,
+                                                                   install_plans) -> None:
     devices = [
         DeviceInfo(device_id="android-a", platform="android", status="device"),
         DeviceInfo(device_id="android-b", platform="android", status="device"),
         DeviceInfo(device_id="harmony-c", platform="harmony", status="device"),
     ]
-    started_threads = []
+    app._apply_device_refresh(devices)
+    app.device_tree.selection_set("harmony-c", "android-a")
+    app.latest_apk, app.latest_hap = Path("demo.apk"), Path("demo.hap")
+    clock = iter([10.0, 11.25])
+    monkeypatch.setattr(main.time, "perf_counter", lambda: next(clock))
+    preflight(devices)
 
-    class FakeThread:
-        def __init__(self, *, target, args, daemon) -> None:
-            self.target = target
-            self.args = args
-            self.daemon = daemon
-
-        def start(self) -> None:
-            started_threads.append(self)
-
-    monkeypatch.setattr(main.threading, "Thread", FakeThread)
-
-    main.App._finalize_install(
-        app,
-        devices,
-        previous_selection={"android-a", "harmony-c"},
-        selected_apk=Path("demo.apk"),
-        selected_hap=Path("demo.hap"),
-        allow_test=True,
-        validation_duration_seconds=1.25,
-    )
+    app.install_to_selected()
+    # The click froze the selection; clearing it meanwhile must not matter.
+    app.device_tree.selection_remove(*app.device_tree.selection())
+    deferred_tasks.run_all()
 
     assert app.device_tree.selection() == ("android-a", "harmony-c")
-    assert len(started_threads) == 1
-    assert started_threads[0].args == (
-        ["android-a", "harmony-c"],
-        Path("demo.apk"),
-        Path("demo.hap"),
-        True,
-    )
-    assert app.logged_messages[0].startswith(
-        "安装前设备校验完成（耗时 1.25 秒）："
-    )
+    assert install_plans == [([("android-a", Path("demo.apk")), ("harmony-c", Path("demo.hap"))], True)]
+    assert "安装前设备校验完成（耗时 1.25 秒）：" in app.log_text.get("1.0", "end")
 
 
-def test_install_worker_logs_command_before_harmony_result(monkeypatch, hdc_executable) -> None:
-    app = object.__new__(main.App)
-    app.devices = [
-        DeviceInfo(device_id="harmony-device", platform="harmony", status="device"),
-    ]
-    app.install_stop_event = threading.Event()
-    app.config_manager = FakeConfig(names={"harmony-device": "Mate 70"})
-    app.logged_messages = []
-    app._log_threadsafe = app.logged_messages.append
-    app.after = lambda *_args: None
+def test_install_plan_logs_command_before_harmony_result(monkeypatch, hdc_executable) -> None:
+    from controller import build_install_plan, run_install_plan
+    devices = [DeviceInfo(device_id="harmony-device", platform="harmony", status="device")]
     hap_path = Path("Harmony release.hap")
+    plan = build_install_plan(["harmony-device"], devices, {"APK": None, "HAP": hap_path},
+                              {"harmony-device": "Mate 70"}.get)
+    cancel = threading.Event()
+    logged_messages = []
 
     def fake_install_harmony(command, stop_event):
         assert command == [hdc_executable, "-t", "harmony-device", "install", str(hap_path)]
-        assert stop_event is app.install_stop_event
-        assert "开始执行命令" in app.logged_messages[-1]
+        assert stop_event is cancel
+        assert "开始执行命令" in logged_messages[-1]
         return InstallResult(
             command=command,
             process=subprocess.CompletedProcess(
@@ -262,15 +237,10 @@ def test_install_worker_logs_command_before_harmony_result(monkeypatch, hdc_exec
 
     monkeypatch.setattr(main.DRIVERS["harmony"], "install", fake_install_harmony)
 
-    main.App._install_worker(
-        app,
-        ["harmony-device"],
-        selected_apk=None,
-        selected_hap=hap_path,
-        allow_test=False,
-    )
+    outcome = run_install_plan(plan, False, cancel, logged_messages.append)
 
-    assert app.logged_messages == [
+    assert outcome.status == "安装完成"
+    assert logged_messages == [
         "开始安装到所选设备: Mate 70",
         (
             "Harmony Mate 70 开始执行命令: "

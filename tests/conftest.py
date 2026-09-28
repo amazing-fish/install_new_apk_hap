@@ -68,6 +68,43 @@ def fake_process(monkeypatch):
     return fake
 
 
+class PendingSteps(list):
+    def run_all(self):
+        while self:
+            self.pop(0)()
+
+
+@pytest.fixture
+def deferred_tasks(app):
+    """Hold background steps so a test can observe the busy state; run_all() finishes them."""
+    pending = PendingSteps()
+    app.tasks.spawn = pending.append
+    return pending
+
+
+@pytest.fixture
+def preflight(monkeypatch):
+    """Set what the pre-install device check (detect_devices) will find."""
+    from platforms import DeviceDetectionResult
+
+    def set_devices(devices, **probe_errors):
+        monkeypatch.setattr(main, 'detect_devices', lambda: DeviceDetectionResult(list(devices), **probe_errors))
+    return set_devices
+
+
+@pytest.fixture
+def install_plans(monkeypatch):
+    """Record each frozen install plan as ([(device_id, package), ...], allow_test)."""
+    from controller import InstallOutcome
+    plans = []
+
+    def run_install_plan(plan, allow_test, cancel, log):
+        plans.append(([(target.device_id, target.package) for target in plan], allow_test))
+        return InstallOutcome()
+    monkeypatch.setattr(main, 'run_install_plan', run_install_plan)
+    return plans
+
+
 @pytest.fixture
 def app(monkeypatch, tmp_path, request, hdc_executable, adb_executable):
     monkeypatch.setattr(main.App, '_get_config_path', lambda self: tmp_path / 'config.json')
@@ -84,6 +121,9 @@ def app(monkeypatch, tmp_path, request, hdc_executable, adb_executable):
         monkeypatch.setattr(main, 'configure_window', scaled_window)
     window = main.App()
     window.withdraw()
+    # Device tasks run synchronously: an action call returns with its result applied.
+    window.tasks.spawn = lambda work: work()
+    window.tasks.post = lambda callback: callback()
     errors = []
     window.report_callback_exception = lambda *error: errors.append(error)
     try:
