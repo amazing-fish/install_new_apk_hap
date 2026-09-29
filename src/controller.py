@@ -1,5 +1,6 @@
 """Tk-free task scheduling and device-action rules, testable without a window."""
 from dataclasses import dataclass, field
+import queue
 import subprocess
 import threading
 from pathlib import Path
@@ -15,6 +16,31 @@ Spawn = Callable[[Callable[[], None]], None]
 
 def spawn_daemon(function: Callable[[], None]) -> None:
     threading.Thread(target=function, daemon=True).start()
+
+
+class Inbox:
+    """The one way background work reaches the UI thread.
+
+    Workers only `post` callables into a thread-safe queue; the UI thread
+    `drain`s it on a timer. No Tk call crosses a thread, so a result produced
+    before the event loop runs is delivered late instead of being lost:
+    Tk's own cross-thread calls fail with "main thread is not in main loop".
+    """
+
+    def __init__(self) -> None:
+        self._callbacks: "queue.SimpleQueue[Callable[[], None]]" = queue.SimpleQueue()
+
+    def post(self, callback: Callable[[], None]) -> None:
+        self._callbacks.put(callback)
+
+    def drain(self) -> None:
+        """Run what is queued, in order; a raising callback leaves the rest queued."""
+        while True:
+            try:
+                callback = self._callbacks.get_nowait()
+            except queue.Empty:
+                return
+            callback()
 
 
 @dataclass

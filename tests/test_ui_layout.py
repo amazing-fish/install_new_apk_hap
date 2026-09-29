@@ -40,20 +40,18 @@ def layout():
     values = {
         "name_var": "测试机",
         "folder_var": "packages",
-        "apk_var": "preset.apk",
-        "hap_var": "preset.hap",
         "install_status_var": "就绪",
         "device_summary_var": "未检测到设备",
         "selected_device_summary_var": "未选择设备",
-        "package_summary_var": "APK preset.apk · HAP preset.hap",
     }
     for name, value in values.items():
         setattr(host, name, tk.StringVar(master=host, value=value))
     callbacks = {name for _, name in BUTTON_ACTIONS + APP_LOG_ACTIONS} | {
-        "on_device_select", "on_apk_selected", "on_hap_selected", "submit_folder"
+        "on_device_select", "submit_folder"
     }
     for name in callbacks:
         setattr(host, name, lambda *args, name=name: host.calls.append(name))
+    host.on_package_selected = lambda kind: host.calls.append(("on_package_selected", kind))
     variables = {name: getattr(host, name) for name in values}
     try:
         build_ui(host)
@@ -76,8 +74,10 @@ def test_layout_preserves_supplied_variables_and_does_not_run_actions(layout):
     for name, variable in variables.items():
         assert getattr(host, name) is variable
     assert host.name_entry.get() == "测试机"
-    assert host.apk_combo.get() == "preset.apk"
-    assert host.hap_combo.get() == "preset.hap"
+    # Package dropdowns hold no variable: the app renders them from its slots.
+    for combo in (host.apk_combo, host.hap_combo):
+        assert str(combo.cget("textvariable")) == ""
+        assert str(combo.cget("state")) == "disabled"
     assert str(host.log_text.cget("state")) == "disabled"
 
 
@@ -113,14 +113,14 @@ def test_selection_events_and_editing_use_supplied_variables(layout):
     host.update()
     assert host.calls == ["on_device_select"]
 
-    for combo, expected in ((host.apk_combo, "on_apk_selected"), (host.hap_combo, "on_hap_selected")):
+    for combo, kind in ((host.apk_combo, "APK"), (host.hap_combo, "HAP")):
         host.calls.clear()
-        combo.configure(values=["chosen"], state="readonly")
-        combo.current(0)
+        combo.configure(values=["first", "chosen"], state="readonly")
+        combo.current(1)
         combo.event_generate("<<ComboboxSelected>>")
         host.update()
-        assert host.calls == [expected]
-    assert host.apk_var.get() == host.hap_var.get() == "chosen"
+        assert host.calls == [("on_package_selected", kind)]
+        assert combo.current() == 1
 
     host.name_entry.delete(0, tk.END)
     host.name_entry.insert(0, "新名称")

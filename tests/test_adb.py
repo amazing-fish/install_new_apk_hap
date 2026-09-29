@@ -96,7 +96,8 @@ def test_preinstall_adb_failure_cannot_redirect_android_to_harmony(app, monkeypa
     harmony = DeviceInfo('harmony-a', 'harmony', 'device')
     app._apply_device_refresh([DeviceInfo('android-a', 'android', 'device'), harmony])
     app.device_tree.selection_set(selected)
-    app.latest_apk, app.latest_hap = Path('app.apk'), Path('app.hap')
+    app.packages['APK'].replace([Path('app.apk')])
+    app.packages['HAP'].replace([Path('app.hap')])
     preflight([harmony], android_error='adb unavailable')
     monkeypatch.setattr(main.messagebox, 'showwarning', lambda *args: None)
     app.install_to_selected()
@@ -110,7 +111,7 @@ def test_preinstall_adb_failure_cannot_redirect_android_to_harmony(app, monkeypa
 def test_android_install_resolves_adb_once_and_logs_that_path(app, preflight, adb_executable, fake_process):
     devices = [DeviceInfo('android-a', 'android', 'device')]
     app._apply_device_refresh(devices)
-    app.latest_apk = Path('app with spaces.apk')
+    app.packages['APK'].replace([Path('app with spaces.apk')])
     preflight(devices)
     fake_process.handler = lambda command, **kwargs: (0, 'Success', '')
     app.install_to_selected()

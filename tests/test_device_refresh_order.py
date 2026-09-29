@@ -196,7 +196,8 @@ def test_preflight_restores_click_selection_and_keeps_target_order(app, monkeypa
     ]
     app._apply_device_refresh(devices)
     app.device_tree.selection_set("harmony-c", "android-a")
-    app.latest_apk, app.latest_hap = Path("demo.apk"), Path("demo.hap")
+    app.packages['APK'].replace([Path("demo.apk")])
+    app.packages['HAP'].replace([Path("demo.hap")])
     clock = iter([10.0, 11.25])
     monkeypatch.setattr(main.time, "perf_counter", lambda: next(clock))
     preflight(devices)

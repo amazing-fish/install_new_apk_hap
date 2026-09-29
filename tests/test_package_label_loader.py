@@ -1,4 +1,4 @@
-from pathlib import Path
+import queue
 import threading
 import time
 import pytest
@@ -7,6 +7,17 @@ from infra.tools import MetadataTools
 from metadata import PackageLabel
 from metadata import loader as loader_module
 from metadata.loader import PackageLabelLoader
+
+
+class Loader(PackageLabelLoader):
+    """Run deliveries where they are posted and collect them for the test."""
+
+    def __init__(self):
+        super().__init__(post=lambda callback: callback())
+        self.results = queue.Queue()
+
+    def request(self, paths):
+        return self.submit(paths, lambda *result: self.results.put(result))
 
 
 def test_worker_coalesces_requests_and_caches_unchanged_files(tmp_path, monkeypatch):
@@ -23,28 +34,49 @@ def test_worker_coalesces_requests_and_caches_unchanged_files(tmp_path, monkeypa
             assert release.wait(3)
         return PackageLabel(path.stem, 'resolved')
     monkeypatch.setattr(loader_module, 'read_package_label', parse)
-    loader = PackageLabelLoader()
+    loader = Loader()
     try:
-        loader.submit(paths)
+        loader.request(paths)
         assert entered.wait(2)
-        loader.submit([paths[1]])
-        generation = loader.submit([paths[2]])
+        loader.request([paths[1]])
+        generation = loader.request([paths[2]])
         release.set()
         result = loader.results.get(timeout=3)
         assert result[0] == generation and list(result[1]) == [paths[2]]
         assert calls == [paths[0], paths[2]]
-        loader.submit([paths[2]])
+        loader.request([paths[2]])
         loader.results.get(timeout=3)
         assert len(calls) == 2
         paths[2].write_bytes(b'rebuilt')
-        loader.submit([paths[2]])
+        loader.request([paths[2]])
         loader.results.get(timeout=3)
         assert len(calls) == 3
+        # Superseded requests were dropped, never delivered.
+        assert loader.results.empty()
     finally:
         release.set()
         loader.close()
         loader._thread.join(timeout=3)
     assert not loader._thread.is_alive()
+
+
+def test_results_are_only_delivered_through_post(tmp_path, monkeypatch):
+    path = tmp_path/'posted.apk'
+    path.touch()
+    monkeypatch.setattr(loader_module, 'resolve_metadata_tools', lambda: MetadataTools())
+    monkeypatch.setattr(loader_module, 'read_package_label', lambda *args: PackageLabel('Posted', 'resolved'))
+    posted, delivered = queue.Queue(), []
+    loader = PackageLabelLoader(post=posted.put)
+    try:
+        loader.submit([path], lambda *result: delivered.append(result))
+        callback = posted.get(timeout=3)
+        time.sleep(0.05)
+        assert delivered == []  # nothing ran on the worker thread
+        callback()
+        assert delivered[0][1][path].name == 'Posted'
+    finally:
+        loader.close()
+        loader._thread.join(timeout=3)
 
 
 def test_file_changed_during_read_is_not_cached_or_returned(tmp_path, monkeypatch):
@@ -55,9 +87,9 @@ def test_file_changed_during_read_is_not_cached_or_returned(tmp_path, monkeypatc
         path.write_bytes(path.read_bytes()+b'x')
         return PackageLabel('obsolete', 'resolved')
     monkeypatch.setattr(loader_module, 'read_package_label', parse)
-    loader = PackageLabelLoader()
+    loader = Loader()
     try:
-        loader.submit([path])
+        loader.request([path])
         assert loader.results.get(timeout=3)[1] == {}
     finally:
         loader.close()
@@ -71,12 +103,12 @@ def test_worker_recovers_after_unexpected_parser_failure(tmp_path, monkeypatch):
     def broken(*args):
         raise RuntimeError('parser failed')
     monkeypatch.setattr(loader_module, 'read_package_label', broken)
-    loader = PackageLabelLoader()
+    loader = Loader()
     try:
-        loader.submit([path])
+        loader.request([path])
         assert loader.results.get(timeout=3)[1][path].status == 'invalid'
         monkeypatch.setattr(loader_module, 'read_package_label', lambda *args: PackageLabel('Recovered', 'resolved'))
-        loader.submit([path])
+        loader.request([path])
         assert loader.results.get(timeout=3)[1][path].name == 'Recovered'
     finally:
         loader.close()
@@ -90,11 +122,11 @@ def test_failed_reads_are_retried_with_unchanged_files_and_tools(tmp_path, monke
     monkeypatch.setattr(loader_module, 'resolve_metadata_tools', lambda: MetadataTools())
     results = iter([PackageLabel(status=status), PackageLabel('Recovered', 'resolved')])
     monkeypatch.setattr(loader_module, 'read_package_label', lambda *args: next(results))
-    loader = PackageLabelLoader()
+    loader = Loader()
     try:
-        loader.submit([path])
+        loader.request([path])
         assert loader.results.get(timeout=3)[1][path].status == status
-        loader.submit([path])
+        loader.request([path])
         assert loader.results.get(timeout=3)[1][path].name == 'Recovered'
     finally:
         loader.close()

@@ -39,10 +39,9 @@ def test_long_content_controls_reflow_and_keyboard_reveals_log(app, geometry):
     app.config_manager.data['device_names'] = {d.device_id: '长名称'*20 for d in devices}
     app._apply_device_refresh(devices)
     app.device_tree.selection_set(*[d.device_id for d in devices])
-    app.latest_apk, app.latest_hap = Path('long-'*30+'.apk'), Path('long-'*30+'.hap')
-    app.apk_var.set(app.latest_apk.name)
-    app.hap_var.set(app.latest_hap.name)
-    app._update_package_summary()
+    app.packages['APK'].replace([Path('long-'*30+'.apk')])
+    app.packages['HAP'].replace([Path('long-'*30+'.hap')])
+    app._render_packages()
     app.update()
     assert_visible(app, app.install_button)
     assert_visible(app, app.status_selection_label)
@@ -87,8 +86,8 @@ def test_default_window_shows_device_packages_and_log_without_page_scroll(app):
     app._apply_device_refresh([DeviceInfo('android-a', 'android', 'device'),
                               DeviceInfo('harmony-b', 'harmony', 'device')])
     app.device_tree.selection_set('android-a')
-    app.apk_combo.configure(values=['demo.apk'], state='readonly')
-    app.apk_var.set('demo.apk')
+    app.packages['APK'].replace([Path('demo.apk')])
+    app._render_packages()
     app.update()
     for control in (app.device_tree, app.name_entry, app.scan_button, app.apk_combo,
                     app.hap_combo, app.log_text, app.install_button):
@@ -106,32 +105,30 @@ def test_default_window_shows_device_packages_and_log_without_page_scroll(app):
 
 
 def test_package_display_has_no_redundant_summary_row(app):
+    def label_texts():
+        return [app.getvar(str(widget.cget('textvariable'))) if str(widget.cget('textvariable'))
+                else str(widget.cget('text'))
+                for widget in descendants(app.scroll_area.content) if isinstance(widget, ttk.Label)]
+
+    def use_apk(name):
+        app.packages['APK'].replace([Path(name)])
+        app._render_packages()
+        app.update()
+
     show(app, DEFAULT_GEOMETRY)
     app._apply_device_refresh([DeviceInfo('a', 'android', 'device')])
-    app.apk_combo.configure(values=['short.apk'], state='readonly')
-    app.apk_var.set('short.apk')
-    app.latest_apk = Path('short.apk')
-    app._update_package_summary()
-    app.update()
-    package_summaries = [widget for widget in descendants(app.scroll_area.content)
-        if isinstance(widget, ttk.Label) and str(widget.cget('textvariable')) == str(app.package_summary_var)]
-    assert package_summaries == []
+    use_apk('short.apk')
+    # The dropdown is the only place the package appears.
+    assert not any('short.apk' in text for text in label_texts())
     assert not app.execution_selection_label.winfo_ismapped()
     app.config_manager.data['device_names'] = {'a': '长设备名称' * 30}
     app._update_selected_device_summary()
-    app.latest_apk = Path('long-name-' * 30 + '.apk')
-    app.apk_var.set(app.latest_apk.name)
-    app._update_package_summary()
-    app.update()
+    use_apk('long-name-' * 30 + '.apk')
     assert app.execution_selection_label.winfo_ismapped()
-    assert [widget for widget in descendants(app.scroll_area.content)
-        if isinstance(widget, ttk.Label) and str(widget.cget('textvariable')) == str(app.package_summary_var)] == []
+    assert not any('long-name-' in text for text in label_texts())
     app.config_manager.data['device_names'] = {'a': 'A'}
     app._update_selected_device_summary()
-    app.apk_var.set('short.apk')
-    app.latest_apk = Path('short.apk')
-    app._update_package_summary()
-    app.update()
+    use_apk('short.apk')
     assert not app.execution_selection_label.winfo_ismapped()
 
 
@@ -212,7 +209,7 @@ def test_platform_actions_follow_selection_and_busy_completion(app, monkeypatch,
     assert app.refresh_button.cget('text') == app.scan_button.cget('text') == '刷新中…'
     app._set_refresh_state(False)
     assert app.crash_log_button.instate(['!disabled'])
-    app.latest_hap = Path('demo.hap')
+    app.packages['HAP'].replace([Path('demo.hap')])
     app.install_to_selected()
     assert app.install_button.cget('text') == '中止安装'
     assert app.crash_log_button.instate(['disabled'])
@@ -231,9 +228,9 @@ def test_install_status_distinguishes_failure_cancel_and_skips(app, monkeypatch,
     app._apply_device_refresh(devices)
     preflight(devices)
     if outcome == 'skip':
-        app.latest_apk = Path('demo.apk')  # nothing a Harmony device can install
+        app.packages['APK'].replace([Path('demo.apk')])  # nothing a Harmony device can install
     else:
-        app.latest_hap = Path('demo.hap')
+        app.packages['HAP'].replace([Path('demo.hap')])
     def install(command, stop_event):
         assert command[0] and stop_event is app.tasks.current.cancel
         if outcome == 'raise':
@@ -258,7 +255,7 @@ def test_preflight_and_udid_exceptions_restore_controls(app, monkeypatch):
     def broken(*args, **kwargs):
         raise RuntimeError('probe failed')
     monkeypatch.setattr(main, 'detect_devices', broken)
-    app.latest_hap = Path('demo.hap')
+    app.packages['HAP'].replace([Path('demo.hap')])
     app.install_to_selected()
     app.update()
     assert not app.tasks.busy and app.install_status_var.get() == '安装异常'

@@ -91,12 +91,10 @@ def _build_package_section(app, container):
     # The path is editable: Enter scans what was typed.
     folder.bind('<Return>', app.submit_folder)
     folder.bind('<KP_Enter>', app.submit_folder)
-    for platform, variable, callback, attr in (
-        ('APK', app.apk_var, app.on_apk_selected, 'apk_combo'),
-        ('HAP', app.hap_var, app.on_hap_selected, 'hap_combo'),
-    ):
-        combo = _field_row(section, platform, variable, combo=True)
-        combo.bind('<<ComboboxSelected>>', callback)
+    for kind, attr in (('APK', 'apk_combo'), ('HAP', 'hap_combo')):
+        # No textvariable: the app renders its package slot and reads the index.
+        combo = _field_row(section, kind, None, combo=True)
+        combo.bind('<<ComboboxSelected>>', lambda _event, kind=kind: app.on_package_selected(kind))
         # Block accidental wheel selection on the closed field, not its popup.
         for sequence in ('<MouseWheel>', '<Button-4>', '<Button-5>'):
             combo.bind(sequence, lambda _event: 'break')
