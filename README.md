@@ -2,7 +2,7 @@
 
 一个面向 Android / Harmony 设备的桌面安装与日志辅助工具：扫描目录中的 APK/HAP，识别包信息，安装到已连接设备，并提供常用设备与日志操作。
 
-当前版本：`v0.8.5`
+当前版本：`v0.10.0`
 
 ## 功能概览
 
@@ -43,6 +43,8 @@ python src/main.py
 6. 点击 **安装到所选设备**。
 
 安装前会重新检测设备，避免把任务发送到已经断开的目标。安装开始后，本次任务使用点击安装时冻结的 APK/HAP 路径和 Android `-t` 决策，后续切换下拉框不会影响正在执行的任务。
+
+安装结果：退出码非 0 判定失败；退出码为 0 但某行输出以明确失败标记开头（hdc `[Fail]`、`error: failed to install`，adb `Failure [`、`adb: failed to install`）也判定失败。stderr 有内容本身不算失败。底部状态区分“安装完成”“安装失败”“安装未完成”（有设备没有可装的包）“已中止”和“安装异常”。
 
 ## 安装包显示与元数据
 
@@ -104,7 +106,7 @@ RESTOOL_EXECUTABLE
 
 ## Harmony APP 日志
 
-设备操作区提供 **获取APP日志** 菜单，只对单选 Harmony 设备启用。
+设备操作区提供 **获取APP日志** 菜单，目标设备（见[目标设备](#目标设备)）为 Harmony 时启用。
 
 ### 乾崑日志
 
@@ -151,9 +153,19 @@ demo_logs_<device>_<timestamp>.zip
 - Android：执行 `adb -s <device_id> shell dumpsys dropbox --print`，输出追加到 `D:\crash.log`（Windows）。
 - Harmony：拉取 `/data/log/faultlog/faultlogger`，筛选最近 7 天文件名包含 `crash` 的日志并打包 ZIP。
 
+### 目标设备
+
+UDID、崩溃日志、APP 日志、复制设备码、保存名称都只作用于一台设备：
+
+- 选中了一台：用这台；
+- 未选择且只连了一台：直接用这台；上次设备探测失败时不做这种自动选择，因为列表可能不全；
+- 选中多台或未选择且有多台：提示先选一台。
+
+按钮是否可用按同一规则判断。安装支持多选；未选择时，安装前校验只剩一台设备才会自动选择它。
+
 ### Harmony UDID
 
-单选 Harmony 设备后执行：
+目标设备为 Harmony 时执行：
 
 ```text
 hdc -t <device_id> shell bm get --udid
@@ -234,6 +246,8 @@ Windows：
 - `last_scan_dir`：最近扫描目录。
 
 旧版本留下的未知字段可以继续存在，但不会参与当前逻辑。
+
+配置写入是原子的：中途断电或崩溃只会留下旧配置或新配置，不会写坏文件。如果配置文件已损坏或无法读取，程序会把它改名为 `app_config.json.bak`（已存在时加时间戳），然后以默认配置启动，不会因此无法打开。
 
 ## 开发与测试
 
