@@ -138,9 +138,16 @@ export default function App() {
         setInstallStatus(payload.installStatus ?? '就绪');
         setDeviceProgress(payload.deviceProgress ?? {});
       } else if (type === 'log') {
+        const entry = payload as LogEntry;
         setLogs((prev) => {
-          const next = [...prev, payload as LogEntry];
-          return next.length > 2000 ? next.slice(-2000) : next;
+          if (prev.length === 0 || entry.id > prev[prev.length - 1].id) {
+            const next = [...prev, entry];
+            return next.length > 2000 ? next.slice(-2000) : next;
+          }
+          if (prev.some((item) => item.id === entry.id)) {
+            return prev;
+          }
+          return [...prev, entry].sort((a, b) => a.id - b.id).slice(-2000);
         });
       } else if (type === 'logs_cleared') {
         setLogs([]);

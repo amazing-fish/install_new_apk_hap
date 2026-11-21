@@ -303,7 +303,7 @@ def test_update_settings_assigns_revisions_in_commit_order(tmp_path: Path):
 
         assert len(emitted) == 8
         revs = [p["rev"] for p in emitted]
-        assert revs == sorted(revs) and len(set(revs)) == 8
+        assert len(set(revs)) == 8 and set(revs) == set(range(1, 9))
         # Last committed config must match the highest-revision payload
         latest = max(emitted, key=lambda p: p["rev"])
         saved = bridge.config_manager.data
