@@ -1,6 +1,15 @@
 __pycache__/
-.venv/
+*.py[cod]
+*$py.class
+.pytest_cache/
 build/
-config/
 dist/
 *.spec
+.venv/
+venv/
+frontend/node_modules/
+frontend/dist/
+backend/web_dist/
+*.log
+.DS_Store
+Thumbs.db

@@ -1,5 +1,32 @@
 # 变更记录
 
+## Unreleased - refactor / performance（#96）
+
+界面栈由 Tkinter / sv-ttk 迁移为 PyWebView（Windows Edge WebView2）+ React / TypeScript / Tailwind CSS；Python 后端不再依赖 Tk。安装语义、`-t` 规则、工具解析、元数据安全边界与日志流程保持不变。
+
+### 性能
+
+- ADB 与 HDC 设备探测并行执行；`adb devices -l` 额外解析 `model` / `product`。
+- 多设备并行安装（默认 4 路，可配 1–8，可切回顺序），逐台回传 等待 / 安装中 / 成功 / 失败 / 跳过 / 中止 状态。
+- 安装命令输出实时流式写入日志（`infra.process.run(on_output=...)`），仍保持超时、取消、输出上限与无控制台窗口。
+- 安装包目录单趟 `os.scandir` 后台扫描；元数据优先解析当前选中包，其余并发增量回传，并按文件 + 工具指纹持久化到 `metadata_cache.json`。
+
+### 交互
+
+- 浅色 / 深色 / 跟随系统主题；全窗口拖放 APK / HAP 文件（定位并选中）或目录（扫描）。
+- 设备平台筛选、全选、型号显示、新接入标记、双击内联重命名、复制设备码。
+- APK / HAP 双卡片：应用名、版本、可复制包名、大小、修改时间、`-t` 策略；候选包可搜索切换；最近目录。
+- 模态弹窗改为非阻塞 Toast，日志导出后可直接“打开位置”，UDID 可一键复制。
+- 日志面板分级着色（CMD / OK / WARN / ERR / INFO）、级别过滤、关键词搜索、自动滚动开关。
+- 设置面板：日志输出目录（默认仍为 Windows `D:\`，不存在时回退 `~/install_new_apk_hap_logs`）、并行安装与并发数、ADB / HDC / AAPT2 / RestoolV2 诊断。
+- 快捷键：`F5` 刷新、`Ctrl+Enter` 安装、`Esc` 中止。
+
+### 工程
+
+- 源码目录 `src/` → `backend/`（Python）+ `frontend/`（Web）；Tk 专属测试移除，其余上游测试迁移保留并补充并发 / 流式 / 缓存 / 拖放测试。
+- CI 新增前端构建作业；EXE 构建先编译前端，`verify_exe.py` 改用 `--env-check` 与 `--package-label-report` 验证内置工具。
+- 诊断参数 `--theme-report` 移除（不再使用 ttk 主题），新增 `--env-check`。
+
 ## v0.10.0 - feature / refactor
 
 分层重构（#71）：平台差异收敛到 Android / Harmony 驱动，外部命令只有一个执行入口，后台任务只有一种调度与回写方式。

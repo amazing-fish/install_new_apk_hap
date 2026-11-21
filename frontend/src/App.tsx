@@ -1,0 +1,355 @@
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Loader2, Upload } from 'lucide-react';
+import { bridgeApi, waitForBridge } from './api';
+import { DevicePanel } from './components/DevicePanel';
+import { ExecutionBar } from './components/ExecutionBar';
+import { HeaderBar } from './components/HeaderBar';
+import { LogConsole } from './components/LogConsole';
+import { PackagePanel } from './components/PackagePanel';
+import { SettingsModal } from './components/SettingsModal';
+import { ToastContainer } from './components/ToastContainer';
+import type {
+  ActiveTask,
+  AppLogTargetItem,
+  AppSettings,
+  DeviceInstallProgress,
+  DeviceItem,
+  InstallerEvent,
+  LogEntry,
+  PackageSlotState,
+  ThemeMode,
+  ToastItem,
+  ToolDiagnostic,
+} from './types';
+
+function applyThemeClass(mode: ThemeMode) {
+  const root = document.documentElement;
+  const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+  const shouldDark = mode === 'dark' || (mode === 'system' && prefersDark);
+  root.classList.toggle('dark', shouldDark);
+}
+
+export default function App() {
+  const [ready, setReady] = useState(false);
+  const [version, setVersion] = useState('1.0.0');
+  const [devices, setDevices] = useState<DeviceItem[]>([]);
+  const [selectedDeviceIds, setSelectedDeviceIds] = useState<string[]>([]);
+  const [deviceErrors, setDeviceErrors] = useState<Record<string, string>>({});
+  const [lastProbeFailed, setLastProbeFailed] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [scanning, setScanning] = useState(false);
+  const [folder, setFolder] = useState('');
+  const [recentDirs, setRecentDirs] = useState<string[]>([]);
+  const [packages, setPackages] = useState<Record<string, PackageSlotState>>({});
+  const [task, setTask] = useState<ActiveTask | null>(null);
+  const [installStatus, setInstallStatus] = useState('就绪');
+  const [deviceProgress, setDeviceProgress] = useState<Record<string, DeviceInstallProgress>>({});
+  const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [settings, setSettings] = useState<AppSettings>({
+    theme: 'system',
+    logOutputDir: '',
+    defaultLogOutputDir: 'D:\\',
+    parallelInstall: true,
+    maxConcurrency: 4,
+  });
+  const [tools, setTools] = useState<Record<string, ToolDiagnostic>>({});
+  const [appLogTargets, setAppLogTargets] = useState<AppLogTargetItem[]>([]);
+  const [toasts, setToasts] = useState<ToastItem[]>([]);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [draggingOver, setDraggingOver] = useState(false);
+  const dragDepthRef = useRef(0);
+
+  const pushToast = useCallback((toast: ToastItem) => {
+    setToasts((prev) => [...prev.slice(-3), toast]);
+    const timeout = toast.actionPath || toast.copyText ? 7000 : 4000;
+    window.setTimeout(() => {
+      setToasts((prev) => prev.filter((item) => item.id !== toast.id));
+    }, timeout);
+  }, []);
+
+  const copyToClipboard = useCallback(
+    async (text: string, label: string) => {
+      try {
+        await navigator.clipboard.writeText(text);
+        pushToast({
+          id: `copy-${Date.now()}`,
+          title: `已复制${label}`,
+          message: text.length > 64 ? `${text.slice(0, 64)}…` : text,
+          variant: 'success',
+        });
+      } catch {
+        pushToast({
+          id: `copy-err-${Date.now()}`,
+          title: '复制失败',
+          message: '剪贴板权限受限，请手动选择复制',
+          variant: 'warn',
+        });
+      }
+    },
+    [pushToast],
+  );
+
+  // Subscribe to backend push events + load initial snapshot
+  useEffect(() => {
+    window.__INSTALLER_EVENT__ = (event: InstallerEvent) => {
+      const { type, payload } = event;
+      if (type === 'devices') {
+        setDevices(payload.devices ?? []);
+        setSelectedDeviceIds(payload.selectedDeviceIds ?? []);
+        setDeviceErrors(payload.deviceErrors ?? {});
+        setLastProbeFailed(Boolean(payload.lastProbeFailed));
+        setRefreshing(Boolean(payload.refreshing));
+      } else if (type === 'packages') {
+        setFolder(payload.folder ?? '');
+        setRecentDirs(payload.recentDirs ?? []);
+        setScanning(Boolean(payload.scanning));
+        setPackages(payload.packages ?? {});
+      } else if (type === 'task') {
+        setTask(payload.task ?? null);
+        setInstallStatus(payload.installStatus ?? '就绪');
+        setDeviceProgress(payload.deviceProgress ?? {});
+      } else if (type === 'log') {
+        setLogs((prev) => {
+          const next = [...prev, payload as LogEntry];
+          return next.length > 2000 ? next.slice(-2000) : next;
+        });
+      } else if (type === 'logs_cleared') {
+        setLogs([]);
+      } else if (type === 'settings') {
+        setSettings(payload as AppSettings);
+      } else if (type === 'toast') {
+        const t = payload as ToastItem;
+        if (t.copyText) {
+          navigator.clipboard?.writeText(t.copyText).catch(() => {});
+        }
+        pushToast(t);
+      }
+    };
+
+    let alive = true;
+    waitForBridge().then(async () => {
+      try {
+        const init = await bridgeApi.getInitialState();
+        if (!alive) return;
+        setVersion(init.version);
+        setDevices(init.devices);
+        setSelectedDeviceIds(init.selectedDeviceIds);
+        setDeviceErrors(init.deviceErrors);
+        setLastProbeFailed(init.lastProbeFailed);
+        setRefreshing(init.refreshing);
+        setScanning(init.scanning);
+        setFolder(init.folder);
+        setRecentDirs(init.recentDirs);
+        setPackages(init.packages);
+        setTask(init.task);
+        setInstallStatus(init.installStatus);
+        setDeviceProgress(init.deviceProgress);
+        setLogs(init.logs);
+        setSettings(init.settings);
+        setTools(init.tools);
+        setAppLogTargets(init.appLogTargets);
+      } finally {
+        if (alive) setReady(true);
+      }
+    });
+
+    return () => {
+      alive = false;
+      delete window.__INSTALLER_EVENT__;
+    };
+  }, [pushToast]);
+
+  // Apply theme & listen to system color scheme changes
+  useEffect(() => {
+    applyThemeClass(settings.theme);
+    const mq = window.matchMedia('(prefers-color-scheme: dark)');
+    const onChange = () => {
+      if (settings.theme === 'system') applyThemeClass('system');
+    };
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, [settings.theme]);
+
+  // Drag-and-drop visual overlay (actual OS path handling is wired via PyWebView DOM drop)
+  useEffect(() => {
+    const onDragEnter = (e: DragEvent) => {
+      e.preventDefault();
+      dragDepthRef.current += 1;
+      setDraggingOver(true);
+    };
+    const onDragOver = (e: DragEvent) => {
+      e.preventDefault();
+    };
+    const onDragLeave = (e: DragEvent) => {
+      e.preventDefault();
+      dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+      if (dragDepthRef.current === 0) setDraggingOver(false);
+    };
+    const onDrop = (e: DragEvent) => {
+      e.preventDefault();
+      dragDepthRef.current = 0;
+      setDraggingOver(false);
+    };
+    window.addEventListener('dragenter', onDragEnter);
+    window.addEventListener('dragover', onDragOver);
+    window.addEventListener('dragleave', onDragLeave);
+    window.addEventListener('drop', onDrop);
+    return () => {
+      window.removeEventListener('dragenter', onDragEnter);
+      window.removeEventListener('dragover', onDragOver);
+      window.removeEventListener('dragleave', onDragLeave);
+      window.removeEventListener('drop', onDrop);
+    };
+  }, []);
+
+  const hasAnyPackage = Object.values(packages).some((slot) => slot.candidates.length > 0);
+
+  // Global keyboard shortcuts: F5 (refresh), Ctrl+Enter (install), Esc (cancel running task)
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (settingsOpen) return;
+      if (e.key === 'F5') {
+        e.preventDefault();
+        bridgeApi.refreshDevices(true);
+      } else if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+        e.preventDefault();
+        if (!task && hasAnyPackage) {
+          bridgeApi.startInstall(selectedDeviceIds);
+        }
+      } else if (e.key === 'Escape' && task && !task.cancelled) {
+        e.preventDefault();
+        bridgeApi.cancelTask();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [settingsOpen, task, hasAnyPackage, selectedDeviceIds]);
+
+  const handleUpdateSettings = async (updates: Partial<AppSettings>) => {
+    setSettings((prev) => ({ ...prev, ...updates }));
+    const res = await bridgeApi.updateSettings(updates);
+    if (res?.settings) setSettings(res.settings);
+  };
+
+  if (!ready) {
+    return (
+      <div className="flex h-full items-center justify-center bg-[var(--surface-canvas)] text-[var(--ink-secondary)]">
+        <div className="flex items-center gap-2.5 text-[13px] font-medium">
+          <Loader2 className="h-4 w-4 animate-spin text-blue-600" />
+          <span>正在初始化设备与工作区…</span>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="relative flex h-full flex-col bg-[var(--surface-canvas)] text-[var(--ink-primary)]">
+      <HeaderBar
+        version={version}
+        theme={settings.theme}
+        tools={tools}
+        onThemeChange={(theme) => handleUpdateSettings({ theme })}
+        onOpenSettings={() => setSettingsOpen(true)}
+      />
+
+      {/* Main Workspace */}
+      <main className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3.5">
+        <DevicePanel
+          devices={devices}
+          selectedDeviceIds={selectedDeviceIds}
+          deviceErrors={deviceErrors}
+          lastProbeFailed={lastProbeFailed}
+          refreshing={refreshing}
+          task={task}
+          deviceProgress={deviceProgress}
+          appLogTargets={appLogTargets}
+          onRefresh={() => bridgeApi.refreshDevices(true)}
+          onSelectChange={(ids) => {
+            setSelectedDeviceIds(ids);
+            bridgeApi.setSelectedDevices(ids);
+          }}
+          onSaveName={(deviceId, name) => bridgeApi.saveDeviceName(deviceId, name)}
+          onCopyId={(deviceId) => copyToClipboard(deviceId, '设备码')}
+          onFetchUdid={() => bridgeApi.fetchUdid()}
+          onFetchCrashLog={() => bridgeApi.fetchCrashLog()}
+          onFetchAppLog={(key) => bridgeApi.fetchAppLog(key)}
+        />
+
+        <PackagePanel
+          folder={folder}
+          recentDirs={recentDirs}
+          scanning={scanning}
+          packages={packages}
+          onChooseFolder={() => bridgeApi.chooseFolder()}
+          onScanFolder={(dir) => bridgeApi.scanFolder(dir)}
+          onOpenFolder={(dir) => bridgeApi.openPathInExplorer(dir)}
+          onSelectPackage={(kind, index) => bridgeApi.selectPackage(kind, index)}
+          onCopyText={(text, label) => copyToClipboard(text, label)}
+        />
+
+        <LogConsole
+          logs={logs}
+          onClear={() => bridgeApi.clearLogs()}
+          onCopyLogs={(text) => {
+            if (text) copyToClipboard(text, '日志');
+          }}
+        />
+      </main>
+
+      <ExecutionBar
+        devices={devices}
+        selectedDeviceIds={selectedDeviceIds}
+        task={task}
+        installStatus={installStatus}
+        parallelInstall={settings.parallelInstall}
+        maxConcurrency={settings.maxConcurrency}
+        hasAnyPackage={hasAnyPackage}
+        onToggleParallel={() => handleUpdateSettings({ parallelInstall: !settings.parallelInstall })}
+        onPrimaryAction={() => {
+          if (task) bridgeApi.cancelTask();
+          else bridgeApi.startInstall(selectedDeviceIds);
+        }}
+      />
+
+      <SettingsModal
+        open={settingsOpen}
+        settings={settings}
+        tools={tools}
+        onClose={() => setSettingsOpen(false)}
+        onUpdateSettings={handleUpdateSettings}
+        onChooseLogDir={async () => {
+          const res = await bridgeApi.chooseLogOutputDir();
+          if (res?.settings) setSettings(res.settings);
+        }}
+        onRefreshDiagnostics={async () => {
+          const res = await bridgeApi.diagnoseEnvironment();
+          if (res?.tools) setTools(res.tools);
+        }}
+      />
+
+      <ToastContainer
+        toasts={toasts}
+        onDismiss={(id) => setToasts((prev) => prev.filter((t) => t.id !== id))}
+        onOpenPath={(path) => bridgeApi.openPathInExplorer(path)}
+        onCopyText={(text, label) => copyToClipboard(text, label)}
+      />
+
+      {/* Full-window Drag & Drop overlay */}
+      {draggingOver && (
+        <div className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center bg-blue-600/15 backdrop-blur-xs">
+          <div className="flex flex-col items-center gap-3 rounded-2xl border-2 border-dashed border-blue-500 bg-[var(--surface-card)]/95 px-10 py-8 shadow-2xl">
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-500/15 text-blue-600 dark:text-blue-400">
+              <Upload className="h-6 w-6" />
+            </div>
+            <div className="text-[15px] font-semibold text-[var(--ink-primary)]">
+              释放以加载 APK / HAP 或切换扫描目录
+            </div>
+            <p className="text-[12px] text-[var(--ink-secondary)]">
+              支持拖入单个安装包直接定位选中，或拖入构建输出文件夹
+            </p>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
