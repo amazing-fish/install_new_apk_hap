@@ -56,6 +56,7 @@ export type LogLevel = 'info' | 'cmd' | 'success' | 'warn' | 'error';
 
 export interface LogEntry {
   id: number;
+  clearGen?: number;
   timestamp: string;
   level: LogLevel;
   message: string;
@@ -111,6 +112,7 @@ export interface InitialAppState {
   installStatus: string;
   deviceProgress: Record<string, DeviceInstallProgress>;
   logs: LogEntry[];
+  logClearGen?: number;
   settings: AppSettings;
   tools: Record<string, ToolDiagnostic>;
   appLogTargets: AppLogTargetItem[];

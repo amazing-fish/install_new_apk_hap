@@ -66,6 +66,7 @@ export default function App() {
     task: 0,
     settings: 0,
   });
+  const logClearGenRef = useRef<number>(0);
 
   const pushToast = useCallback((toast: ToastItem) => {
     setToasts((prev) => [...prev.slice(-3), toast]);
@@ -116,6 +117,7 @@ export default function App() {
   // Subscribe to backend push events + load initial snapshot
   useEffect(() => {
     revisionsRef.current = { devices: 0, packages: 0, task: 0, settings: 0 };
+    logClearGenRef.current = 0;
 
     window.__INSTALLER_EVENT__ = (event: InstallerEvent) => {
       const { type, payload } = event;
@@ -139,18 +141,37 @@ export default function App() {
         setDeviceProgress(payload.deviceProgress ?? {});
       } else if (type === 'log') {
         const entry = payload as LogEntry;
+        const entryGen = entry.clearGen ?? 0;
+        if (entryGen < logClearGenRef.current) return;
+        if (entryGen > logClearGenRef.current) {
+          logClearGenRef.current = entryGen;
+        }
         setLogs((prev) => {
-          if (prev.length === 0 || entry.id > prev[prev.length - 1].id) {
-            const next = [...prev, entry];
+          const minGen = logClearGenRef.current;
+          if (entryGen < minGen) return prev;
+          const base =
+            prev.length > 0 && (prev[0].clearGen ?? 0) < minGen
+              ? prev.filter((item) => (item.clearGen ?? 0) >= minGen)
+              : prev;
+          if (base.length === 0 || entry.id > base[base.length - 1].id) {
+            const next = [...base, entry];
             return next.length > 2000 ? next.slice(-2000) : next;
           }
-          if (prev.some((item) => item.id === entry.id)) {
-            return prev;
+          if (base.some((item) => item.id === entry.id)) {
+            return base;
           }
-          return [...prev, entry].sort((a, b) => a.id - b.id).slice(-2000);
+          return [...base, entry].sort((a, b) => a.id - b.id).slice(-2000);
         });
       } else if (type === 'logs_cleared') {
-        setLogs([]);
+        const nextGen =
+          typeof payload?.clearGen === 'number' ? payload.clearGen : logClearGenRef.current + 1;
+        if (nextGen > logClearGenRef.current) {
+          logClearGenRef.current = nextGen;
+        }
+        setLogs((prev) => {
+          const minGen = logClearGenRef.current;
+          return prev.filter((item) => (item.clearGen ?? 0) >= minGen);
+        });
       } else if (type === 'settings') {
         if (!acceptEventRevision('settings', payload?.rev)) return;
         setSettings(payload as AppSettings);
@@ -195,11 +216,18 @@ export default function App() {
           setInstallStatus(init.installStatus);
           setDeviceProgress(init.deviceProgress);
         }
+        const initGen = init.logClearGen ?? 0;
+        if (initGen > logClearGenRef.current) {
+          logClearGenRef.current = initGen;
+        }
         setLogs((prev) => {
-          if (prev.length === 0) return init.logs;
+          const minGen = logClearGenRef.current;
+          const liveFiltered = prev.filter((item) => (item.clearGen ?? 0) >= minGen);
+          const initFiltered = init.logs.filter((item) => (item.clearGen ?? 0) >= minGen);
+          if (liveFiltered.length === 0) return initFiltered;
           const byId = new Map<number, LogEntry>();
-          for (const item of init.logs) byId.set(item.id, item);
-          for (const item of prev) byId.set(item.id, item);
+          for (const item of initFiltered) byId.set(item.id, item);
+          for (const item of liveFiltered) byId.set(item.id, item);
           const merged = Array.from(byId.values()).sort((a, b) => a.id - b.id);
           return merged.length > 2000 ? merged.slice(-2000) : merged;
         });

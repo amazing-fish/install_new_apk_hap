@@ -198,6 +198,7 @@ function createPreviewMockState(): InitialAppState {
 }
 
 let mockState: InitialAppState | null = null;
+let mockLogClearGen = 0;
 
 function emitMock(type: InstallerEvent['type'], payload: any) {
   window.__INSTALLER_EVENT__?.({ type, payload });
@@ -208,6 +209,7 @@ export const bridgeApi = {
     if (window.pywebview?.api) {
       return window.pywebview.api.get_initial_state();
     }
+    mockLogClearGen = 0;
     mockState = createPreviewMockState();
     return structuredClone(mockState);
   },
@@ -223,6 +225,7 @@ export const bridgeApi = {
       emitMock('devices', { ...mockState, refreshing: false });
       emitMock('log', {
         id: Date.now(),
+        clearGen: mockLogClearGen,
         timestamp: new Date().toTimeString().slice(0, 8),
         level: 'info',
         message: '预览模式：已完成模拟并行刷新（ADB + HDC）',
@@ -437,7 +440,12 @@ export const bridgeApi = {
     if (window.pywebview?.api) {
       return window.pywebview.api.clear_logs();
     }
-    emitMock('logs_cleared', {});
+    mockLogClearGen += 1;
+    if (mockState) {
+      mockState.logs = [];
+      mockState.logClearGen = mockLogClearGen;
+    }
+    emitMock('logs_cleared', { clearGen: mockLogClearGen });
     return { ok: true };
   },
 };

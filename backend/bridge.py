@@ -98,6 +98,7 @@ class InstallerBridge:
 
         self._logs: List[Dict[str, Any]] = []
         self._log_seq = 0
+        self._log_clear_gen = 0
         self._event_revs: Dict[str, int] = {"devices": 0, "packages": 0, "task": 0, "settings": 0}
         self._closed = False
         self._device_ids_before_last_refresh: Optional[Set[str]] = None
@@ -164,6 +165,7 @@ class InstallerBridge:
             self._log_seq += 1
             entry = {
                 "id": self._log_seq,
+                "clearGen": self._log_clear_gen,
                 "timestamp": datetime.now().strftime("%H:%M:%S"),
                 "level": level,
                 "message": message,
@@ -326,6 +328,7 @@ class InstallerBridge:
                 "installStatus": self.install_status,
                 "deviceProgress": dict(self.device_progress),
                 "logs": list(self._logs),
+                "logClearGen": self._log_clear_gen,
                 "settings": {
                     "theme": cfg.get("theme", "system"),
                     "logOutputDir": cfg.get("log_output_dir", ""),
@@ -381,7 +384,8 @@ class InstallerBridge:
         harmony_error: Optional[str] = None,
         android_error: Optional[str] = None,
         expected_refresh_request_id: Optional[int] = None,
-    ) -> None:
+        advance_refresh_request_id: bool = False,
+    ) -> Optional[int]:
         probe_errors = {
             platform: error
             for platform, error in (("android", android_error), ("harmony", harmony_error))
@@ -396,7 +400,10 @@ class InstallerBridge:
                 expected_refresh_request_id is not None
                 and expected_refresh_request_id != self._latest_refresh_request_id
             ):
-                return
+                return None
+            if advance_refresh_request_id:
+                self._latest_refresh_request_id += 1
+            applied_refresh_id = self._latest_refresh_request_id
             log_result = (
                 bool(probe_errors)
                 or snapshot != self._last_device_refresh_snapshot
@@ -452,6 +459,7 @@ class InstallerBridge:
             self._append_log(f"{summary_label}：{per_platform}，总计 {total} 台", "info")
             if new_ids:
                 self._append_log(f"新增设备已置顶高亮：{self._device_labels_for_log(sorted(new_ids))}", "success")
+        return applied_refresh_id
 
     def set_selected_devices(self, device_ids: List[str]) -> Dict[str, Any]:
         with self._state_lock:
@@ -729,6 +737,9 @@ class InstallerBridge:
         if task is None:
             return {"ok": False, "error": "已有任务正在运行"}
 
+        with self._state_lock:
+            preflight_refresh_id = self._latest_refresh_request_id
+
         def _preflight():
             started_at = time.perf_counter()
             detection = detect_devices(cancel=task.cancel)
@@ -746,6 +757,7 @@ class InstallerBridge:
                 parallel,
                 max_concurrency,
                 res[1],
+                preflight_refresh_id=preflight_refresh_id,
             ),
             lambda err: self._apply_install_preparation_error(task, err),
         )
@@ -767,6 +779,7 @@ class InstallerBridge:
         parallel: bool,
         max_concurrency: int,
         validation_duration: float,
+        preflight_refresh_id: Optional[int] = None,
     ) -> None:
         if task.cancelled:
             self._end_task(task, "安装已中止", ok=False, status="已中止")
@@ -782,12 +795,14 @@ class InstallerBridge:
                 self._apply_install_preparation_error(task, RuntimeError(message))
                 return
 
-        self._apply_device_refresh(
+        applied_refresh_id = self._apply_device_refresh(
             preflight_devices,
             previous_selection,
             summary_label=f"安装前设备校验完成（耗时 {validation_duration:.2f} 秒）",
             harmony_error=detection.harmony_error,
             android_error=detection.android_error,
+            expected_refresh_request_id=preflight_refresh_id,
+            advance_refresh_request_id=preflight_refresh_id is not None,
         )
 
         current_ids = {d.device_id for d in preflight_devices}
@@ -798,7 +813,13 @@ class InstallerBridge:
             selection_list = [preflight_devices[0].device_id]
             auto_picked = self._device_label(selection_list[0])
             with self._state_lock:
-                if {d.device_id for d in self.devices} == current_ids:
+                if (
+                    preflight_refresh_id is None
+                    or (
+                        applied_refresh_id is not None
+                        and self._latest_refresh_request_id == applied_refresh_id
+                    )
+                ) and {d.device_id for d in self.devices} == current_ids:
                     self.selected_device_ids = list(selection_list)
                     auto_payload = self._build_devices_payload_locked()
                 else:
@@ -1100,10 +1121,12 @@ class InstallerBridge:
 
     def clear_logs(self) -> Dict[str, Any]:
         with self._state_lock:
+            self._log_clear_gen += 1
+            clear_gen = self._log_clear_gen
             self._logs.clear()
             self._last_device_refresh_snapshot = None
             self._last_package_scan_snapshot = None
-        self._emit("logs_cleared", {})
+        self._emit("logs_cleared", {"clearGen": clear_gen})
         return {"ok": True}
 
     def open_path_in_explorer(self, target_path: str) -> Dict[str, Any]:
