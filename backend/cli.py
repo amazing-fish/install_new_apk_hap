@@ -4,13 +4,32 @@ from __future__ import annotations
 import argparse
 from dataclasses import asdict
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
 import shutil
+import sys
 
 from infra.tools import bundled_tools_directory, diagnose_tools, resolve_metadata_tools
 from metadata import read_package_label
+
+
+def _read_version() -> str:
+    candidates = [
+        Path(getattr(sys, "_MEIPASS", "")) / "VERSION" if getattr(sys, "frozen", False) else None,
+        Path(__file__).resolve().parents[1] / "VERSION",
+    ]
+    for path in candidates:
+        if path and path.is_file():
+            return path.read_text(encoding="utf-8").strip()
+    return ""
+
+
+def _web_dist_index() -> Path:
+    if getattr(sys, "frozen", False):
+        return Path(getattr(sys, "_MEIPASS", "")) / "web_dist" / "index.html"
+    return Path(__file__).resolve().parent / "web_dist" / "index.html"
 
 
 def run_cli(arguments: list[str]) -> int:
@@ -28,6 +47,10 @@ def run_cli(arguments: list[str]) -> int:
         payload = {
             "tools": diagnose_tools(),
             "bundled_directory": str(bundled_tools_directory()) if bundled_tools_directory() else None,
+            "version": _read_version(),
+            "web_dist_ready": _web_dist_index().is_file(),
+            "webview_available": importlib.util.find_spec("webview") is not None
+            and (sys.platform != "win32" or importlib.util.find_spec("clr_loader") is not None),
         }
         args.env_check.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         return 0

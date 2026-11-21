@@ -6,11 +6,21 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 
 
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = ROOT / "vendor" / "metadata-tools" / "windows-x64" / "manifest.json"
+
+
+def print_summary_json(summary: dict, stream=None) -> None:
+    """Write summary JSON without failing on legacy Windows console encodings (e.g. cp1252)."""
+    target = stream if stream is not None else sys.stdout
+    try:
+        target.write(json.dumps(summary, ensure_ascii=False, indent=2) + "\n")
+    except UnicodeEncodeError:
+        target.write(json.dumps(summary, ensure_ascii=True, indent=2) + "\n")
 
 
 def main() -> None:
@@ -45,6 +55,15 @@ def main() -> None:
 
         assert env_report["tools"]["aapt2"]["available"], "Bundled aapt2 not detected in isolated EXE"
         assert env_report["tools"]["restool"]["available"], "Bundled restool not detected in isolated EXE"
+        expected_version = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
+        if env_report.get("web_dist_ready") is not True:
+            raise SystemExit(f"Bundled frontend web_dist/index.html missing in isolated EXE: {env_report}")
+        if env_report.get("webview_available") is not True:
+            raise SystemExit(f"PyWebView / clr_loader runtime unavailable in isolated EXE: {env_report}")
+        if env_report.get("version") != expected_version:
+            raise SystemExit(
+                f"Embedded VERSION mismatch in isolated EXE: expected {expected_version!r}, got {env_report.get('version')!r}"
+            )
 
         # Exercise the bundled tools on real compiled fixtures, as v0.10 did.
         fixtures = ROOT / "tests" / "fixtures" / "package_labels"
@@ -79,6 +98,9 @@ def main() -> None:
         summary = {
             "exe": str(exe),
             "size_bytes": exe.stat().st_size,
+            "version": env_report.get("version"),
+            "web_dist_ready": env_report.get("web_dist_ready"),
+            "webview_available": env_report.get("webview_available"),
             "bundled_directory": env_report.get("bundled_directory"),
             "manifest_files": sorted(manifest["files"].keys()),
             "tools": env_report["tools"],
@@ -87,7 +109,7 @@ def main() -> None:
         if args.output:
             args.output.parent.mkdir(parents=True, exist_ok=True)
             args.output.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        print(json.dumps(summary, ensure_ascii=False, indent=2))
+        print_summary_json(summary)
 
 
 if __name__ == "__main__":
