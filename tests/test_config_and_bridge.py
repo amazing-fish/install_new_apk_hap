@@ -329,31 +329,41 @@ def test_finalize_install_does_not_overwrite_newer_refresh_state(tmp_path: Path,
         dev_old = DeviceInfo("dev-old", "android", "device")
         dev_new = DeviceInfo("dev-new", "android", "device")
 
+        planned: list[list[str]] = []
         monkeypatch.setattr(
             bridge_mod,
             "run_install_plan",
-            lambda *_args, **_kw: bridge_mod.InstallOutcome(),
+            lambda plan, *_args, **_kw: planned.append([t.device_id for t in plan]) or bridge_mod.InstallOutcome(),
         )
 
-        # Case 1: newer refresh is still in flight -> preflight must not clear refreshing
+        def run_finalize(task, detection, preflight_refresh_id):
+            bridge.tasks.run(
+                task,
+                lambda: None,
+                lambda _v: bridge._finalize_install(
+                    task,
+                    detection,
+                    previous_selection=set(),
+                    packages=bridge._selected_packages(),
+                    allow_test=True,
+                    parallel=False,
+                    max_concurrency=1,
+                    validation_duration=0.01,
+                    preflight_refresh_id=preflight_refresh_id,
+                ),
+                lambda err: (_ for _ in ()).throw(err),
+            )
+
+        # Case 1: newer refresh is still in flight -> preflight must not clear refreshing or install
         task1 = bridge.tasks.start("install", "安装", verb="")
         bridge._latest_refresh_request_id = 5
         bridge.refreshing = True
-        bridge._finalize_install(
-            task1,
-            DeviceDetectionResult(devices=[dev_old]),
-            previous_selection=set(),
-            packages=bridge._selected_packages(),
-            allow_test=True,
-            parallel=False,
-            max_concurrency=1,
-            validation_duration=0.01,
-            preflight_refresh_id=4,
-        )
+        run_finalize(task1, DeviceDetectionResult(devices=[dev_old]), 4)
         assert bridge.refreshing is True
         assert bridge.devices == []
+        assert planned == []
 
-        # Case 2: newer refresh already completed -> preflight must not overwrite devices/errors/selection
+        # Case 2: newer refresh already completed -> preflight must not overwrite devices/errors/selection or install
         bridge._apply_device_refresh_result(
             5,
             DeviceDetectionResult(devices=[dev_new], harmony_error="hdc err"),
@@ -364,20 +374,11 @@ def test_finalize_install_does_not_overwrite_newer_refresh_state(tmp_path: Path,
 
         task2 = bridge.tasks.start("install", "安装", verb="")
         emitted.clear()
-        bridge._finalize_install(
-            task2,
-            DeviceDetectionResult(devices=[dev_old]),
-            previous_selection=set(),
-            packages=bridge._selected_packages(),
-            allow_test=True,
-            parallel=False,
-            max_concurrency=1,
-            validation_duration=0.01,
-            preflight_refresh_id=4,
-        )
+        run_finalize(task2, DeviceDetectionResult(devices=[dev_old]), 4)
         assert [d.device_id for d in bridge.devices] == ["dev-new"]
         assert bridge.device_errors == {"harmony": "hdc err"}
         assert not any(et == "devices" for et, _ in emitted)
+        assert planned == []
 
         # Case 3: earlier refresh in flight + preflight cancelled -> earlier refresh still clears refreshing
         task3 = bridge.tasks.start("install", "安装", verb="")
@@ -385,45 +386,22 @@ def test_finalize_install_does_not_overwrite_newer_refresh_state(tmp_path: Path,
         bridge.refreshing = True
         captured_id = bridge._latest_refresh_request_id
         task3.cancel.set()
-        bridge.tasks.run(
-            task3,
-            lambda: None,
-            lambda _v: bridge._finalize_install(
-                task3,
-                DeviceDetectionResult(devices=[dev_old]),
-                previous_selection=set(),
-                packages=bridge._selected_packages(),
-                allow_test=True,
-                parallel=False,
-                max_concurrency=1,
-                validation_duration=0.01,
-                preflight_refresh_id=captured_id,
-            ),
-            lambda err: (_ for _ in ()).throw(err),
-        )
+        run_finalize(task3, DeviceDetectionResult(devices=[dev_old]), captured_id)
         assert bridge._latest_refresh_request_id == 6
         bridge._apply_device_refresh_result(6, DeviceDetectionResult(devices=[dev_old]))
         assert bridge.refreshing is False
         assert [d.device_id for d in bridge.devices] == ["dev-old"]
+        assert planned == []
 
         # Case 4: preflight completes before older in-flight refresh -> advances id so late older refresh is ignored
         task4 = bridge.tasks.start("install", "安装", verb="")
         bridge._latest_refresh_request_id = 6
         bridge.refreshing = True
-        bridge._finalize_install(
-            task4,
-            DeviceDetectionResult(devices=[dev_new]),
-            previous_selection=set(),
-            packages=bridge._selected_packages(),
-            allow_test=True,
-            parallel=False,
-            max_concurrency=1,
-            validation_duration=0.01,
-            preflight_refresh_id=6,
-        )
+        run_finalize(task4, DeviceDetectionResult(devices=[dev_new]), 6)
         assert bridge.refreshing is False
         assert [d.device_id for d in bridge.devices] == ["dev-new"]
         assert bridge._latest_refresh_request_id == 7
+        assert planned == [["dev-new"]]
         bridge._apply_device_refresh_result(6, DeviceDetectionResult(devices=[dev_old]))
         assert [d.device_id for d in bridge.devices] == ["dev-new"]
     finally:

@@ -795,7 +795,7 @@ class InstallerBridge:
                 self._apply_install_preparation_error(task, RuntimeError(message))
                 return
 
-        self._apply_device_refresh(
+        applied_refresh_id = self._apply_device_refresh(
             preflight_devices,
             previous_selection,
             summary_label=f"安装前设备校验完成（耗时 {validation_duration:.2f} 秒）",
@@ -804,6 +804,19 @@ class InstallerBridge:
             expected_refresh_request_id=preflight_refresh_id,
             advance_refresh_request_id=preflight_refresh_id is not None,
         )
+        if preflight_refresh_id is not None and applied_refresh_id is None:
+            self._toast(
+                "设备列表已更新",
+                "安装前校验期间触发了新的设备刷新，请重新确认设备后再安装",
+                variant="warn",
+            )
+            self._end_task(
+                task,
+                "安装已中止：设备列表已更新，请重新确认后再试",
+                ok=False,
+                status="已中止",
+            )
+            return
 
         current_ids = {d.device_id for d in preflight_devices}
         missing = previous_selection - current_ids
