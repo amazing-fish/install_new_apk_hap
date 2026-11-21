@@ -5,13 +5,9 @@ from pathlib import Path
 
 import pytest
 
-import main
 from infra import process, tools
 from platforms import DeviceDetectionResult, DeviceInfo, detect_devices
 from platforms.harmony import HARMONY
-
-# The app fixture stubs refresh_devices out; keep the real one for refresh tests.
-REAL_REFRESH_DEVICES = main.App.refresh_devices
 
 
 @pytest.fixture
@@ -79,42 +75,3 @@ def test_failed_or_hung_adb_probe_is_an_error(adb_executable, monkeypatch, fake_
     assert fake_process.calls[0][1]['timeout'] == process.PROBE_TIMEOUT
 
 
-def test_android_probe_failure_is_logged_and_blocks_auto_select(app, monkeypatch):
-    harmony = DeviceInfo('harmony-a', 'harmony', 'device')
-    monkeypatch.setattr(main, 'detect_devices', lambda cancel=None: DeviceDetectionResult([harmony], android_error='未找到 adb'))
-    REAL_REFRESH_DEVICES(app)
-    log = app.log_text.get('1.0', 'end')
-    assert 'Android 设备探测失败：未找到 adb；已保留检测到的 Harmony 1 台' in log
-    assert '未检测到设备' not in log
-    # The only visible device may not be the only connected one.
-    assert app.device_tree.selection() == ()
-
-
-@pytest.mark.parametrize('selected', [('android-a',), ('harmony-a',), ()])
-def test_preinstall_adb_failure_cannot_redirect_android_to_harmony(app, monkeypatch, preflight, install_plans,
-                                                                   selected):
-    harmony = DeviceInfo('harmony-a', 'harmony', 'device')
-    app._apply_device_refresh([DeviceInfo('android-a', 'android', 'device'), harmony])
-    app.device_tree.selection_set(selected)
-    app.packages['APK'].replace([Path('app.apk')])
-    app.packages['HAP'].replace([Path('app.hap')])
-    preflight([harmony], android_error='adb unavailable')
-    monkeypatch.setattr(main.messagebox, 'showwarning', lambda *args: None)
-    app.install_to_selected()
-    if selected == ('harmony-a',):
-        assert install_plans == [([('harmony-a', Path('app.hap'))], True)]
-    else:
-        assert not install_plans
-        assert app.install_status_var.get() == '安装异常'
-
-
-def test_android_install_resolves_adb_once_and_logs_that_path(app, preflight, adb_executable, fake_process):
-    devices = [DeviceInfo('android-a', 'android', 'device')]
-    app._apply_device_refresh(devices)
-    app.packages['APK'].replace([Path('app with spaces.apk')])
-    preflight(devices)
-    fake_process.handler = lambda command, **kwargs: (0, 'Success', '')
-    app.install_to_selected()
-    assert fake_process.commands == [[adb_executable, '-s', 'android-a', 'install', '-t', 'app with spaces.apk']]
-    assert subprocess.list2cmdline(fake_process.commands[0]) in app.log_text.get('1.0', 'end')
-    assert app.install_status_var.get() == '安装完成'

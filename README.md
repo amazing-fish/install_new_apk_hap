@@ -1,307 +1,148 @@
 # install_new_apk_hap
 
-一个面向 Android / Harmony 设备的桌面安装与日志辅助工具：扫描目录中的 APK/HAP，识别包信息，安装到已连接设备，并提供常用设备与日志操作。
+面向 **Android（ADB）** 与 **HarmonyOS（HDC）** 的桌面安装、包元数据解析与日志辅助工具。当前主线基于 v0.10.0 进行界面栈与性能重构（#96，尚未发布版本）：后端为零 Tk 依赖的 Python，界面为 **PyWebView（Windows Edge WebView2）+ React / TypeScript / Tailwind CSS**，安装语义、`-t` 规则、工具解析与内置离线解析工具链保持不变。
 
-当前版本：`v0.10.0`
+---
 
-## 功能概览
+## 核心重构亮点
 
-- 自动检测 Android（ADB）与 Harmony（HDC）设备。
-- 扫描目录内全部 APK/HAP，默认选中修改时间最新的安装包。
-- 后台解析应用名称、包名 / bundleName、`versionName`、`versionCode`。
-- Android 自动处理 `adb install -t`：
-  - 明确解析到 `testOnly=false` 时省略 `-t`；
-  - 尚未解析、解析失败、不支持或 `testOnly=true` 时默认使用 `-t`，优先保证安装可用。
-- 支持多设备选择、设备自定义命名、安装前设备重新校验；安装与日志拉取均可中止。
-- 获取 Android / Harmony 崩溃日志。
-- 获取 Harmony APP 日志：
-  - 乾崑日志；
-  - Demo 日志。
-- 获取 Harmony UDID。
-- Windows 单文件 exe 内置 APK/HAP 元数据解析工具，不要求用户额外安装 Android / Harmony SDK 才能读取支持格式的包信息。
+### 1. 并发与响应性能全面升级
+- **ADB / HDC 并行设备探测**：使用 `ThreadPoolExecutor` 并发执行 `adb devices -l` 与 `hdc list targets`，并自动提取 Android 设备 `model` / `product` 型号信息；任一平台探测失败仍保留另一平台设备并明确提示，不误判为空列表。
+- **多设备并行安装**：支持多台设备并发下发安装（可配置并发上限 2–8 路，也可一键切换顺序安装），每台设备独立展示实时状态徽章（等待中 / 安装中 / 成功耗时 / 失败原因 / 跳过），支持随时一键中止全部任务。
+- **实时流式命令输出**：重构 `backend/infra/process.py`，基于无缓冲流式读取线程实时推送 `adb install` / `hdc install` 进度日志，同时保留无黑框、防管道死锁、超时、取消与输出上限保护。
+- **优先并发 + 增量推送 + 磁盘持久化缓存的包元数据解析**：
+  - 单趟 `os.scandir` 后台目录扫描，大目录/网络盘不卡顿 UI。
+  - 按文件指纹（路径、大小、修改时间、inode）+ 工具指纹做原子化 JSON 磁盘缓存（`metadata_cache.json`），二次打开或重扫秒级呈现。
+  - 未命中缓存时，优先并发解析当前选中的最新 APK / HAP，率先刷新界面，再以受控并发池增量推送其余候选包。
+
+### 2. 现代桌面审美与人机交互重塑
+- **浅色 / 深色 / 跟随系统**三态主题无缝切换，持久化保存。
+- **全窗口原生拖放（Drag & Drop）**：直接把 `.apk`、`.hap` 文件或整个构建输出目录拖进窗口——拖入单文件自动切换目录并精准选中该文件，拖入目录立即扫描。
+- **设备管理体验升级**：
+  - 平台语义徽章（Android 翡翠绿 / Harmony 天空蓝）、在线状态脉动绿点、自动识别设备型号、新接入设备置顶与“新接入”标签高亮。
+  - 支持平台筛选胶囊（全部 / Android / Harmony）、一键全选/取消全选、**双击行或点击铅笔图标原地内联重命名**、一键复制设备码。
+- **双列安装包卡片 + 可搜索切换器**：
+  - 清晰呈现应用名、版本徽章、可一键复制的包名 / bundleName、文件大小、相对修改时间及 Android 自动 `-t` 策略标识。
+  - 候选包过多时支持内置搜索框按应用名 / 版本号 / 文件名即时过滤；目录栏保留最近使用目录历史与一键打开资源管理器。
+- **非阻塞 Toast 轻提示 + 键盘快捷键**：
+  - 获取 UDID 自动复制并弹出带“复制”按钮的 Toast；导出崩溃日志 / Harmony APP 日志后 Toast 内直接提供**“打开位置”**按钮。
+  - 全局快捷键：`F5` 刷新设备与安装包、`Ctrl+Enter` 开始安装、`Esc` 中止当前任务。
+
+### 3. 专业日志终端与设置诊断
+- **分级着色终端**：自动区分 `CMD` / `OK` / `WARN` / `ERR` / `INFO`，支持按级别过滤、关键词实时搜索、自动滚动锁定开关、折叠收起、一键复制与清空。
+- **设置与工具链诊断弹窗**：可视化检查 `ADB` / `HDC` / `AAPT2` / `RestoolV2` 解析路径与可用性，支持自定义日志导出目录（Windows 默认兼容 `D:\`，不存在时自动回退至用户目录 `~/install_new_apk_hap_logs`）。
+
+---
+
+## 目录结构
+
+```text
+installer/
+├── backend/                  # Python 后端（零 Tk 依赖，高并发、高可测）
+│   ├── main.py               # PyWebView 桌面入口、原生拖放绑定与 CLI 诊断入口
+│   ├── bridge.py             # JS-Python RPC 桥接与线程安全事件推送
+│   ├── controller.py         # 任务槽调度、目标解析、并行/串行多设备安装
+│   ├── config_manager.py     # 原子化配置持久化与损坏备份恢复
+│   ├── packages.py           # 单趟扫描、PackageSlot 与自动 -t 规则
+│   ├── cli.py                # 无 GUI 诊断命令行
+│   ├── infra/                # 外部进程流式执行器与统一工具链路径解析
+│   ├── platforms/            # Android (ADB) / Harmony (HDC) 平台驱动与并发探测
+│   └── metadata/             # 安全解析边界、APK/HAP 解析、持久化缓存与优先并发加载器
+├── frontend/                 # React 19 + TypeScript + Vite + Tailwind CSS v4 前端
+├── vendor/metadata-tools/    # 内置 Windows x64 AAPT2 & RestoolV2 及上游 NOTICE
+├── scripts/                  # Windows 单文件 EXE 构建与隔离环境验证脚本
+└── tests/                    # pytest 自动化测试套件
+```
+
+---
 
 ## 快速开始
 
-### 源码运行
+### 环境要求
+- **Python 3.11+**
+- **Node.js 20+**（仅首次构建前端或开发前端时需要）
+- Windows 10 / 11（内置 Edge WebView2 运行时）
 
-需要 Python 3.11+，并确保 Tkinter 可用。
+### 安装依赖并构建前端
 
-```bash
+```powershell
+# 1. 安装 Python 依赖
 python -m pip install -r requirements.txt
-python src/main.py
+
+# 2. 构建现代 Web 前端产物到 backend/web_dist/
+cd frontend
+npm install
+npm run build
+cd ..
 ```
 
-界面使用 [sv-ttk](https://github.com/rdbende/Sun-Valley-ttk-theme)（Sun Valley 浅色主题，MIT）；未安装或加载失败时回退到系统原生 ttk 主题，功能不受影响。Windows 上按系统缩放比例清晰渲染，不再被位图拉伸。
-
-### 基本流程
-
-1. 连接手机。
-2. 点击 **刷新设备**。
-3. 点击 **选择目录**，选择包含 APK/HAP 的目录；也可以直接在目录框输入路径后按回车。
-4. 工具自动扫描并选择最新 APK/HAP；后台补充应用名与版本信息。
-5. 选择一个或多个设备。
-6. 点击 **安装到所选设备**。
-
-安装前会重新检测设备，避免把任务发送到已经断开的目标。安装开始后，本次任务使用点击安装时冻结的 APK/HAP 路径和 Android `-t` 决策，后续切换下拉框不会影响正在执行的任务。
-
-安装结果：退出码非 0 判定失败；退出码为 0 但某行输出以明确失败标记开头（hdc `[Fail]`、`error: failed to install`，adb `Failure [`、`adb: failed to install`）也判定失败。stderr 有内容本身不算失败。底部状态区分“安装完成”“安装失败”“安装未完成”（有设备没有可装的包）“已中止”和“安装异常”。
-
-## 安装包显示与元数据
-
-安装包下拉框直接显示解析结果，不再额外重复一行摘要。典型格式：
-
-```text
-应用名称 · 1.3.08.107 (142)（app.apk）
-```
-
-### APK
-
-使用同一次 `aapt2 dump badging` 读取：
-
-- `application-label`
-- package name
-- `versionName`
-- `versionCode`
-- `testOnly`
-
-### HAP
-
-读取 Stage / FA 包中的明确声明字段，并在需要时使用 RestoolV2 解析资源型名称，可获得：
-
-- 应用名称
-- bundleName
-- versionName
-- versionCode
-
-元数据解析只是增强能力，不是安装前置条件。工具缺失、格式不支持或解析失败时，仍可以按真实文件路径选择并安装。
-
-Windows x64 单文件 exe 当前内置：
-
-- AAPT2 `8.9.1-12782657`
-- RestoolV2 `6.1.0.003`
-
-显式覆盖仍可使用：
-
-```text
-AAPT2_EXECUTABLE
-RESTOOL_EXECUTABLE
-```
-
-设置显式覆盖后只尝试该路径；如果路径不存在或不可执行，对应解析工具会被视为不可用，不会静默回退到内置工具、PATH 或 SDK 中的其他版本。元数据解析不可用不会阻止按真实文件路径选择和安装。
-
-更完整的解析边界、读取限制和模块职责见 [`docs/anchor.md`](docs/anchor.md)。内置工具来源与 NOTICE 见 [`vendor/metadata-tools/README.md`](vendor/metadata-tools/README.md)。
-
-## Android `-t` 策略
-
-当前没有手工 `-t` 复选框，也没有按 APK 文件名保存 `-t` 配置。
-
-规则只有一条：
-
-```text
-明确 testOnly=false  -> adb install <apk>
-其余情况             -> adb install -t <apk>
-```
-
-这样包信息解析失败不会反过来阻塞安装，也不会因为解析尚未完成导致 test-only APK 安装失败。
-
-## Harmony APP 日志
-
-设备操作区提供 **获取APP日志** 菜单，目标设备（见[目标设备](#目标设备)）为 Harmony 时启用。
-
-### 乾崑日志
-
-远端固定目录：
-
-```text
-/data/app/el2/100/base/com.yinwang.qiankunapp.hm/haps/phone/files/qklog/
-```
-
-### Demo 日志
-
-远端固定目录：
-
-```text
-/data/app/el2/100/base/adsmobilesdk.all.huawei/haps/entry/files
-```
-
-两种日志都直接执行：
-
-```text
-hdc -t <device_id> file recv <remote_path> <temporary_local_path>
-```
-
-不再扫描 `/data/app`，也不执行全局 `find`。
-
-拉取成功后自动压缩为 ZIP：
-
-```text
-qiankun_logs_<device>_<timestamp>.zip
-demo_logs_<device>_<timestamp>.zip
-```
-
-输出目录：
-
-- Windows：`D:\`
-- 其他系统：`~/install_new_apk_hap_logs`
-
-`recv` 返回非 0 时保留命令、返回码、stdout 和 stderr；命令成功但没有文件时会明确提示空结果，不生成空 ZIP。
-
-## 其他日志与设备操作
-
-### 崩溃日志
-
-- Android：执行 `adb -s <device_id> shell dumpsys dropbox --print`，输出追加到 `D:\crash.log`（Windows）。
-- Harmony：拉取 `/data/log/faultlog/faultlogger`，筛选最近 7 天文件名包含 `crash` 的日志并打包 ZIP。
-
-### 目标设备
-
-UDID、崩溃日志、APP 日志、复制设备码、保存名称都只作用于一台设备：
-
-- 选中了一台：用这台；
-- 未选择且只连了一台：直接用这台；上次设备探测失败时不做这种自动选择，因为列表可能不全；
-- 选中多台或未选择且有多台：提示先选一台。
-
-按钮是否可用按同一规则判断。安装支持多选；未选择时，安装前校验只剩一台设备才会自动选择它。
-
-### Harmony UDID
-
-目标设备为 Harmony 时执行：
-
-```text
-hdc -t <device_id> shell bm get --udid
-```
-
-成功后展示并复制到剪贴板。
-
-## ADB / HDC 路径配置
-
-### ADB
-
-优先级：
-
-1. `ADB_EXECUTABLE`：完整 adb 可执行文件路径；配置错误时直接报告，不回退。
-2. `PATH`。
-3. `ANDROID_SDK_ROOT` / `ANDROID_HOME` 下的 `platform-tools`（这两个变量常被其他工具共用，无效时跳过）。
-4. Windows：`%LOCALAPPDATA%\Android\Sdk\platform-tools`。
-
-adb 缺失、无法执行、返回非 0 或超时，都作为 Android 探测失败明确记录，已检测到的 Harmony 设备仍会保留，不会显示成“未检测到设备”。
-
-### HDC
-
-设备检测、UDID、HAP 安装、Harmony 崩溃日志和 APP 日志共用同一套 HDC 路径解析。
-
-优先级：
-
-1. `HDC_EXECUTABLE`：完整 HDC 可执行文件路径。
-2. `HDC_PATH`：HDC 文件或包含 HDC 的目录。
-3. `DEVECO_SDK_HOME`：DevEco SDK 根目录。
-4. `PATH`。
-5. Windows 常见 DevEco SDK 安装目录。
-
-前三项属于显式配置；配置错误时直接报告，不回退到其他 HDC。
-
-PowerShell 示例：
+### 启动桌面应用
 
 ```powershell
-$env:HDC_EXECUTABLE = 'D:\DevEco Studio\sdk\default\openharmony\toolchains\hdc.exe'
-python src/main.py
+python backend/main.py
 ```
 
-HDC 缺失或执行失败时，已检测到的 Android 设备仍会保留；不会把 Harmony 探测失败伪装成“没有设备”。
+#### 前端热更新开发模式
 
-### 命令超时
+```powershell
+# 终端 1：启动 Vite 开发服务
+cd frontend
+npm run dev
 
-- 设备检测、UDID：15 秒。
-- 崩溃日志、APP 日志拉取：120 秒。
-- 安装：不设超时，可随时中止。
-
-安装、UDID、崩溃日志、APP 日志同一时刻只运行一个；运行期间底部主按钮变为“中止…”，可中止当前任务。
-
-超时的命令会被终止并按失败处理，日志中注明原因。
-
-## UI 行为
-
-- 设备列表默认至少显示 3 行，最多 8 行。
-- 页面、设备列表和日志滚动条只在内容真实溢出时显示，不需要滚动时不占空间。
-- 安装包只保留一行下拉显示，不重复展示包摘要。
-- 操作按钮在窗口变窄时自动换行。
-- 底部安装 / 中止入口固定可达。
-- 日志支持横向和纵向滚动。
-- `Tab` / `Shift+Tab` 切换控件时自动保证焦点可见。
-- `Ctrl+Home` / `Ctrl+End` 跳到页面首尾，`Ctrl+PageUp` / `Ctrl+PageDown` 翻页。
-
-相同设备或安装包状态重复刷新不会持续刷重复日志；错误、恢复、设备/文件变化、安装前校验及安装命令仍会记录。
-
-## 配置文件
-
-Windows：
-
-```text
-%APPDATA%/install_new_apk_hap/app_config.json
+# 终端 2：以开发模式启动 PyWebView 桌面容器
+python backend/main.py --dev-url http://localhost:5173 --debug
 ```
 
-当前持久化内容主要包括：
+---
 
-- `device_names`：设备自定义名称；
-- `last_scan_dir`：最近扫描目录。
+## 环境变量与工具链配置
 
-旧版本留下的未知字段可以继续存在，但不会参与当前逻辑。
+与原项目保持完全一致的显式覆盖优先策略：
 
-配置写入是原子的：中途断电或崩溃只会留下旧配置或新配置，不会写坏文件。如果配置文件已损坏或无法读取，程序会把它改名为 `app_config.json.bak`（已存在时加时间戳），然后以默认配置启动，不会因此无法打开。
+| 工具 | 显式覆盖环境变量 | 自动探测顺序 |
+| --- | --- | --- |
+| **ADB** | `ADB_EXECUTABLE` | `PATH` → `ANDROID_SDK_ROOT` / `ANDROID_HOME` → `%LOCALAPPDATA%\Android\Sdk\platform-tools` |
+| **HDC** | `HDC_EXECUTABLE` / `HDC_PATH` / `DEVECO_SDK_HOME` | `PATH` → 常见 Huawei / DevEco SDK 安装目录 |
+| **AAPT2** | `AAPT2_EXECUTABLE` | 打包内置工具 → `PATH` / Android SDK `build-tools` → 仓库内置 `vendor/` |
+| **RestoolV2** | `RESTOOL_EXECUTABLE` | 打包内置工具 → `PATH` / HDC 同目录 → 仓库内置 `vendor/` |
 
-## 开发与测试
+---
 
-安装依赖与 pytest 后：
+## 测试与打包
 
-```bash
+### 运行后端单元测试
+
+```powershell
 python -m pip install -r requirements.txt pytest
+python -m pytest -v -p no:cacheprovider
 ```
 
-运行：
-
-```bash
-python -m pytest -q -p no:cacheprovider
-```
-
-测试包含真实 Tk 控件/事件、设备状态、HDC 路径、包元数据、安装参数快照以及日志固定路径检查；设备命令使用替身，不等同于真机安装验收。
-
-PR 与 `main` push 会在 Windows / Python 3.11 上运行测试。
-
-## Windows EXE 构建
-
-GitHub Actions 工作流：**Build Windows EXE**。
-
-PowerShell 中可以直接读取仓库当前版本，避免手写版本号漂移：
+### 诊断 CLI（无 GUI）
 
 ```powershell
-$version = (Get-Content -Raw VERSION).Trim()
-gh workflow run build-exe.yml --ref <branch> -f version=$version
+python backend/main.py --env-check env.json
+python backend/main.py --package-label-report labels.json path\to\app.apk path\to\app.hap
 ```
 
-本地构建：
+### 构建 Windows x64 单文件 EXE
 
-```bash
+需安装 `pyinstaller`：
+
+```powershell
+python -m pip install pyinstaller
 python scripts/build_exe.py
-python scripts/verify_exe.py dist/install_new_apk_hap.exe --output build/standalone-exe-validation.json
+python scripts/verify_exe.py dist/install_new_apk_hap.exe --output build/verify.json
 ```
 
-`build_exe.py` 会校验内置元数据工具和 NOTICE 后再执行 onefile 打包；`verify_exe.py` 会把最终 exe 放进无 SDK 配置的隔离环境中验证 APK/HAP 元数据读取、内置工具哈希、许可导出，以及 exe 实际启用 Sun Valley 主题。
-
-分支构建产物不是正式 Release。正式发布时 tag 必须与 `VERSION` 完全一致。
-
-### EXE 诊断命令
-
-不启动 GUI、不连接设备：
-
-```powershell
-.\install_new_apk_hap.exe --package-label-report labels.json package.apk package.hap
-.\install_new_apk_hap.exe --tool-notices new-notices-directory
-.\install_new_apk_hap.exe --theme-report theme.json
-```
+---
 
 ## 文档
 
 - [`CHANGELOG.md`](CHANGELOG.md)：版本变化。
 - [`docs/anchor.md`](docs/anchor.md)：当前架构、约束和模块职责。
-- [`docs/ui_refactor_tracking.md`](docs/ui_refactor_tracking.md)：历史 UI 重构归档，不作为当前行为说明。
+- [`docs/ui_refactor_tracking.md`](docs/ui_refactor_tracking.md)：历史 UI 重构归档。
 - [`vendor/metadata-tools/README.md`](vendor/metadata-tools/README.md)：内置工具版本、来源和许可。
+
+## 许可证
+
+遵循仓库根目录 [`LICENSE`](LICENSE)（MIT License）。内置 AAPT2 / RestoolV2 工具的来源与上游许可声明详见 [`vendor/metadata-tools/README.md`](vendor/metadata-tools/README.md)。

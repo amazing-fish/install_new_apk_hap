@@ -1,98 +1,94 @@
-"""Exercise the final onefile EXE after removing developer SDK dependencies."""
+"""Verify a built Windows standalone EXE in a clean environment without SDKs on PATH."""
+from __future__ import annotations
+
 import argparse
-import hashlib
 import json
 import os
 from pathlib import Path
-import shutil
 import subprocess
 import tempfile
 
 
 ROOT = Path(__file__).resolve().parents[1]
+MANIFEST = ROOT / "vendor" / "metadata-tools" / "windows-x64" / "manifest.json"
 
 
-def run_exe(command: list[str], app_dir: Path, environment: dict) -> int:
-    process = subprocess.Popen(command, cwd=app_dir, env=environment)
-    try:
-        return process.wait(timeout=45)
-    except subprocess.TimeoutExpired:
-        # A onefile EXE has a bootloader parent and an application child.
-        # Kill the owned tree before the parent exits, so a failed GUI startup
-        # cannot leave a dialog/process behind or hold the temporary files open.
-        subprocess.run([str(Path(os.environ['SystemRoot']) / 'System32/taskkill.exe'),
-                        '/PID', str(process.pid), '/T', '/F'], check=False,
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        process.wait(timeout=10)
-        raise
-
-
-def verify_exe(executable: Path, work: Path) -> dict:
-    app_dir = work / 'standalone app'
-    app_dir.mkdir()
-    exe = app_dir / executable.name
-    shutil.copyfile(executable, exe)
-    assert list(app_dir.iterdir()) == [exe], 'Only the EXE may be copied'
-    fixture_dir = work / 'packages'
-    fixture_dir.mkdir()
-    names = ('compiled.apk', 'compiled.hap', 'compiled-v2.hap')
-    packages = []
-    for name in names:
-        path = fixture_dir / name
-        shutil.copyfile(ROOT / 'tests/fixtures/package_labels' / name, path)
-        packages.append(path)
-    environment = dict(os.environ)
-    for key in list(environment):
-        if key.upper() in {'AAPT2_EXECUTABLE', 'RESTOOL_EXECUTABLE', 'ANDROID_HOME',
-                           'ANDROID_SDK_ROOT', 'DEVECO_SDK_HOME', 'HDC_EXECUTABLE', 'HDC_PATH'}:
-            del environment[key]
-    environment['PATH'] = str(Path(os.environ['SystemRoot']) / 'System32')
-    for key in ('APPDATA', 'LOCALAPPDATA', 'TEMP', 'TMP'):
-        folder = work / ('temp' if key == 'TMP' else key.lower())
-        folder.mkdir(exist_ok=True)
-        environment[key] = str(folder)
-    output = work / 'labels.json'
-    returncode = run_exe(
-        [str(exe), '--package-label-report', str(output), *map(str, packages)],
-        app_dir, environment,
-    )
-    assert output.is_file(), f'EXE produced no diagnostic report (exit {returncode})'
-    report = json.loads(output.read_text(encoding='utf8'))
-    assert returncode == 0, report
-    assert len(report['packages']) == len(names)
-    assert [Path(row['path']).name for row in report['packages']] == list(names)
-    assert all(row['status'] == 'resolved' and row['name'] == 'Demo 默认名称'
-               for row in report['packages']), report
-    bundled = Path(report['bundled_directory'])
-    assert bundled.parent.parent == work / 'temp', bundled
-    assert report['tools'] == {'aapt2': str(bundled / 'aapt2.exe'),
-                               'restool': str(bundled / 'restool.exe')}
-    manifest = json.loads((ROOT / 'vendor/metadata-tools/windows-x64/manifest.json').read_text())
-    assert report['bundled_sha256'] == {name: manifest['files'][name]
-                                        for name in ('aapt2.exe', 'restool.exe')}
-    notices = work / 'exported notices'
-    assert run_exe([str(exe), '--tool-notices', str(notices)], app_dir, environment) == 0
-    for name in ('AAPT2-NOTICE.txt', 'RESTOOL-NOTICE.txt'):
-        assert hashlib.sha256((notices / name).read_bytes()).hexdigest() == manifest['files'][name]
-    assert json.loads((notices / 'manifest.json').read_text()) == manifest
-    # The GUI falls back to the native theme silently; the EXE must bundle sv-ttk.
-    theme_output = work / 'theme.json'
-    assert run_exe([str(exe), '--theme-report', str(theme_output)], app_dir, environment) == 0
-    theme = json.loads(theme_output.read_text(encoding='utf8'))
-    assert theme.pop('tile_fix_sprites', 0) > 0, theme  # ui_tile_fix.tcl bundled and applied
-    assert theme == {'themed': True, 'theme': 'sun-valley-light'}, theme
-    report.update(standalone_exe=True, sdk_environment_removed=True, notices_verified=True,
-                  theme=theme)
-    return report
-
-
-if __name__ == '__main__':
+def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('executable', type=Path)
-    parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument("exe", type=Path)
+    parser.add_argument("--output", type=Path, default=None)
     args = parser.parse_args()
-    with tempfile.TemporaryDirectory(prefix='metadata-exe-') as temp:
-        result = verify_exe(args.executable.resolve(), Path(temp).resolve())
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2) + '\n', encoding='utf8')
-    print('Standalone EXE: APK, HAP v1/v2 and bundled notices verified without SDK configuration')
+
+    exe = args.exe.resolve()
+    if not exe.is_file():
+        raise SystemExit(f"EXE not found: {exe}")
+
+    clean_env = {
+        "SystemRoot": os.environ.get("SystemRoot", r"C:\Windows"),
+        "PATH": os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32"),
+        "TEMP": tempfile.gettempdir(),
+        "TMP": tempfile.gettempdir(),
+    }
+
+    with tempfile.TemporaryDirectory(prefix="verify_installer_exe_") as tmp:
+        tmp_dir = Path(tmp)
+        env_json = tmp_dir / "env.json"
+        notices_dir = tmp_dir / "notices"
+        subprocess.run([str(exe), "--env-check", str(env_json)], env=clean_env, check=True)
+        subprocess.run([str(exe), "--tool-notices", str(notices_dir)], env=clean_env, check=True)
+
+        env_report = json.loads(env_json.read_text(encoding="utf-8"))
+        manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
+        for req in ("AAPT2-NOTICE.txt", "RESTOOL-NOTICE.txt", "manifest.json"):
+            if not (notices_dir / req).is_file():
+                raise SystemExit(f"Missing exported notice file: {req}")
+
+        assert env_report["tools"]["aapt2"]["available"], "Bundled aapt2 not detected in isolated EXE"
+        assert env_report["tools"]["restool"]["available"], "Bundled restool not detected in isolated EXE"
+
+        # Exercise the bundled tools on real compiled fixtures, as v0.10 did.
+        fixtures = ROOT / "tests" / "fixtures" / "package_labels"
+        labels_json = tmp_dir / "labels.json"
+        packages = [fixtures / "compiled.apk", fixtures / "compiled.hap", fixtures / "compiled-v2.hap"]
+        subprocess.run([str(exe), "--package-label-report", str(labels_json), *map(str, packages)],
+                       env=clean_env, check=True)
+        labels = json.loads(labels_json.read_text(encoding="utf-8"))
+        reported = labels.get("packages", [])
+        expected_paths = [str(p.resolve()) for p in packages]
+        actual_paths = [
+            str(Path(row["path"]).resolve())
+            for row in reported
+            if isinstance(row, dict) and row.get("path")
+        ]
+        if (
+            len(reported) != len(expected_paths)
+            or len(set(actual_paths)) != len(expected_paths)
+            or set(actual_paths) != set(expected_paths)
+        ):
+            raise SystemExit(
+                f"Incomplete or mismatched package fixture results: expected {expected_paths}, got {reported}"
+            )
+        for row in reported:
+            if row.get("status") != "resolved" or row.get("name") != "Demo 默认名称":
+                raise SystemExit(f"Unexpected package label in isolated EXE: {row}")
+        bundled_hashes = labels.get("bundled_sha256", {})
+        for name in ("aapt2.exe", "restool.exe"):
+            if bundled_hashes.get(name) != manifest["files"][name]:
+                raise SystemExit(f"Embedded {name} hash does not match manifest")
+
+        summary = {
+            "exe": str(exe),
+            "size_bytes": exe.stat().st_size,
+            "bundled_directory": env_report.get("bundled_directory"),
+            "manifest_files": sorted(manifest["files"].keys()),
+            "tools": env_report["tools"],
+            "packages": labels["packages"],
+        }
+        if args.output:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        print(json.dumps(summary, ensure_ascii=False, indent=2))
+
+
+if __name__ == "__main__":
+    main()

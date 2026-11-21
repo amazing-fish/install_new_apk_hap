@@ -3,19 +3,16 @@ import sys
 from pathlib import Path
 
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 
-from config_manager import ConfigManager
+from config_manager import DEFAULT_CONFIG, ConfigManager
 
 
 def test_new_config_contains_only_active_preferences(tmp_path: Path) -> None:
     config_path = tmp_path / "app_config.json"
     manager = ConfigManager(config_path)
 
-    assert manager.data == {
-        "device_names": {},
-        "last_scan_dir": "",
-    }
+    assert manager.data == DEFAULT_CONFIG
     assert json.loads(config_path.read_text(encoding="utf-8")) == manager.data
 
 
@@ -55,7 +52,7 @@ def test_unreadable_config_is_backed_up_and_defaults_are_used(tmp_path: Path, co
 
     manager = ConfigManager(config_path)
 
-    assert manager.data == {"device_names": {}, "last_scan_dir": ""}
+    assert manager.data == DEFAULT_CONFIG
     assert (tmp_path / "app_config.json.bak").read_bytes() == content.encode("latin-1")
     assert json.loads(config_path.read_text(encoding="utf-8")) == manager.data
 
@@ -82,7 +79,7 @@ def test_invalid_field_types_fall_back_individually(tmp_path: Path) -> None:
 
     manager = ConfigManager(config_path)
 
-    assert manager.data == {"device_names": {}, "last_scan_dir": "packages", "legacy": 1}
+    assert manager.data == {**DEFAULT_CONFIG, "last_scan_dir": "packages", "recent_dirs": [], "legacy": 1}
     assert not (tmp_path / "app_config.json.bak").exists()
 
 
