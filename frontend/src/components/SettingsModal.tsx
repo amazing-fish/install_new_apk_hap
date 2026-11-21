@@ -41,6 +41,8 @@ export function SettingsModal({
 }: SettingsModalProps) {
   const [checking, setChecking] = useState(false);
   const dialogRef = useRef<HTMLDivElement>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
 
   useEffect(() => {
     if (!open) return;
@@ -57,7 +59,7 @@ export function SettingsModal({
 
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        onClose();
+        onCloseRef.current();
         return;
       }
       if (e.key === 'Tab' && dialog) {
@@ -85,7 +87,7 @@ export function SettingsModal({
       window.removeEventListener('keydown', onKey);
       prevFocus?.focus();
     };
-  }, [open, onClose]);
+  }, [open]);
 
   if (!open) return null;
 

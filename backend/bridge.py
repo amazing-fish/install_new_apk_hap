@@ -582,17 +582,17 @@ class InstallerBridge:
                 self._on_package_labels,
                 priority_paths=priority,
             )
+            persist_error: Optional[OSError] = None
+            if remember:
+                try:
+                    self.config_manager.set_last_scan_dir(str(directory))
+                except OSError as error:
+                    persist_error = error
             payload = self._build_packages_payload_locked()
 
-        if remember:
-            try:
-                self.config_manager.set_last_scan_dir(str(directory))
-                with self._state_lock:
-                    if request_id == self._latest_scan_request_id:
-                        payload = self._build_packages_payload_locked()
-            except OSError as error:
-                self._append_log(f"保存最近扫描目录失败：{error}", "warn")
-                self._toast("保存目录历史失败", str(error), variant="warn")
+        if persist_error is not None:
+            self._append_log(f"保存最近扫描目录失败：{persist_error}", "warn")
+            self._toast("保存目录历史失败", str(persist_error), variant="warn")
 
         self._emit("packages", payload)
         if changed:
@@ -1161,8 +1161,8 @@ class InstallerBridge:
                 mapped["max_concurrency"] = max(1, min(8, int(updates["maxConcurrency"])))
             except (TypeError, ValueError):
                 pass
-        cfg = self.config_manager.update_settings(mapped)
         with self._state_lock:
+            cfg = self.config_manager.update_settings(mapped)
             settings_payload = {
                 "rev": self._next_rev_locked("settings"),
                 "theme": cfg.get("theme", "system"),

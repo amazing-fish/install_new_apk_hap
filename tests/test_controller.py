@@ -170,3 +170,32 @@ def test_task_runner_cancel_expected_and_wait_idle():
     assert task_b.cancelled is False
     gate2.set()
     assert runner.wait_idle(timeout=2.0) is True
+
+
+def test_task_runner_keeps_task_busy_until_callback_finishes():
+    runner = TaskRunner(post=lambda fn: fn())
+    task = runner.start("install", "安装", verb="")
+    assert task is not None
+
+    step2_done = threading.Event()
+    cb1_allow_exit = threading.Event()
+    busy_after_step2 = []
+
+    def on_step1(_res):
+        runner.run(task, lambda: "step2", lambda _r2: step2_done.set(), lambda _e: None)
+        assert step2_done.wait(timeout=2.0)
+        # Even though step2 already ran & finished on its worker thread,
+        # cb1 has NOT returned yet so the task must remain busy!
+        busy_after_step2.append(runner.busy)
+        cb1_allow_exit.wait(timeout=2.0)
+
+    runner.run(task, lambda: "step1", on_step1, lambda _e: None)
+    # Wait briefly for cb1 to reach cb1_allow_exit
+    deadline = time.monotonic() + 2.0
+    while not busy_after_step2 and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert busy_after_step2 == [True]
+    assert runner.busy is True
+    cb1_allow_exit.set()
+    assert runner.wait_idle(timeout=2.0) is True
+    assert runner.busy is False

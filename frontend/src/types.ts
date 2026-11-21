@@ -65,6 +65,7 @@ export interface LogEntry {
 export type ThemeMode = 'system' | 'light' | 'dark';
 
 export interface AppSettings {
+  rev?: number;
   theme: ThemeMode;
   logOutputDir: string;
   defaultLogOutputDir: string;

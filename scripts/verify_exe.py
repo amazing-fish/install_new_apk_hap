@@ -53,7 +53,22 @@ def main() -> None:
         subprocess.run([str(exe), "--package-label-report", str(labels_json), *map(str, packages)],
                        env=clean_env, check=True)
         labels = json.loads(labels_json.read_text(encoding="utf-8"))
-        for row in labels.get("packages", []):
+        reported = labels.get("packages", [])
+        expected_paths = [str(p.resolve()) for p in packages]
+        actual_paths = [
+            str(Path(row["path"]).resolve())
+            for row in reported
+            if isinstance(row, dict) and row.get("path")
+        ]
+        if (
+            len(reported) != len(expected_paths)
+            or len(set(actual_paths)) != len(expected_paths)
+            or set(actual_paths) != set(expected_paths)
+        ):
+            raise SystemExit(
+                f"Incomplete or mismatched package fixture results: expected {expected_paths}, got {reported}"
+            )
+        for row in reported:
             if row.get("status") != "resolved" or row.get("name") != "Demo 默认名称":
                 raise SystemExit(f"Unexpected package label in isolated EXE: {row}")
         bundled_hashes = labels.get("bundled_sha256", {})

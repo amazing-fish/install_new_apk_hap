@@ -252,3 +252,62 @@ def test_persistent_metadata_cache_serializes_concurrent_flushes(tmp_path: Path)
     assert not errors
     reloaded = PersistentMetadataCache(cache_path=cache_path)
     assert reloaded.get("k0") is not None
+
+
+def test_superseded_scan_cannot_overwrite_newer_last_scan_dir(tmp_path: Path):
+    dir_a = tmp_path / "dir_a"
+    dir_b = tmp_path / "dir_b"
+    dir_a.mkdir()
+    dir_b.mkdir()
+    (dir_a / "a.apk").write_bytes(b"a")
+    (dir_b / "b.apk").write_bytes(b"b")
+
+    bridge = InstallerBridge(config_path=tmp_path / "cfg.json", emit=lambda *_: None, auto_start=False)
+    try:
+        from packages import find_packages
+
+        bridge._latest_scan_request_id = 2
+        # Commit newer scan B first
+        found_b = find_packages(dir_b)
+        bridge._apply_scan_result(2, dir_b, found_b, ("b", ()), None, remember=True)
+        assert bridge.config_manager.data["last_scan_dir"] == str(dir_b)
+
+        # Late superseded scan A must NOT overwrite last_scan_dir
+        found_a = find_packages(dir_a)
+        bridge._apply_scan_result(1, dir_a, found_a, ("a", ()), None, remember=True)
+        assert bridge.config_manager.data["last_scan_dir"] == str(dir_b)
+        assert bridge.folder == str(dir_b)
+    finally:
+        bridge.close()
+
+
+def test_update_settings_assigns_revisions_in_commit_order(tmp_path: Path):
+    emitted: list[dict] = []
+    bridge = InstallerBridge(
+        config_path=tmp_path / "cfg.json",
+        emit=lambda kind, payload: emitted.append(payload) if kind == "settings" else None,
+        auto_start=False,
+    )
+    try:
+        def update(theme: str, conc: int):
+            bridge.update_settings({"theme": theme, "maxConcurrency": conc})
+
+        threads = [
+            threading.Thread(target=update, args=("dark" if i % 2 else "light", 2 + (i % 4)))
+            for i in range(8)
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert len(emitted) == 8
+        revs = [p["rev"] for p in emitted]
+        assert revs == sorted(revs) and len(set(revs)) == 8
+        # Last committed config must match the highest-revision payload
+        latest = max(emitted, key=lambda p: p["rev"])
+        saved = bridge.config_manager.data
+        assert latest["theme"] == saved["theme"]
+        assert latest["maxConcurrency"] == saved["max_concurrency"]
+    finally:
+        bridge.close()

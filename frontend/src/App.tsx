@@ -97,33 +97,43 @@ export default function App() {
     [pushToast],
   );
 
+  const acceptEventRevision = useCallback((channel: string, rev?: number): boolean => {
+    if (typeof rev !== 'number') return true;
+    const current = revisionsRef.current[channel] ?? 0;
+    if (rev <= current) return false;
+    revisionsRef.current[channel] = rev;
+    return true;
+  }, []);
+
+  const acceptSnapshotRevision = useCallback((channel: string, rev?: number): boolean => {
+    if (typeof rev !== 'number') return true;
+    const current = revisionsRef.current[channel] ?? 0;
+    if (rev < current) return false;
+    revisionsRef.current[channel] = rev;
+    return true;
+  }, []);
+
   // Subscribe to backend push events + load initial snapshot
   useEffect(() => {
-    const isFreshRevision = (channel: string, payload: any): boolean => {
-      if (typeof payload?.rev !== 'number') return true;
-      const current = revisionsRef.current[channel] ?? 0;
-      if (payload.rev <= current) return false;
-      revisionsRef.current[channel] = payload.rev;
-      return true;
-    };
+    revisionsRef.current = { devices: 0, packages: 0, task: 0, settings: 0 };
 
     window.__INSTALLER_EVENT__ = (event: InstallerEvent) => {
       const { type, payload } = event;
       if (type === 'devices') {
-        if (!isFreshRevision('devices', payload)) return;
+        if (!acceptEventRevision('devices', payload?.rev)) return;
         setDevices(payload.devices ?? []);
         setSelectedDeviceIds(payload.selectedDeviceIds ?? []);
         setDeviceErrors(payload.deviceErrors ?? {});
         setLastProbeFailed(Boolean(payload.lastProbeFailed));
         setRefreshing(Boolean(payload.refreshing));
       } else if (type === 'packages') {
-        if (!isFreshRevision('packages', payload)) return;
+        if (!acceptEventRevision('packages', payload?.rev)) return;
         setFolder(payload.folder ?? '');
         setRecentDirs(payload.recentDirs ?? []);
         setScanning(Boolean(payload.scanning));
         setPackages(payload.packages ?? {});
       } else if (type === 'task') {
-        if (!isFreshRevision('task', payload)) return;
+        if (!acceptEventRevision('task', payload?.rev)) return;
         setTask(payload.task ?? null);
         setInstallStatus(payload.installStatus ?? '就绪');
         setDeviceProgress(payload.deviceProgress ?? {});
@@ -135,7 +145,7 @@ export default function App() {
       } else if (type === 'logs_cleared') {
         setLogs([]);
       } else if (type === 'settings') {
-        if (!isFreshRevision('settings', payload)) return;
+        if (!acceptEventRevision('settings', payload?.rev)) return;
         setSettings(payload as AppSettings);
       } else if (type === 'toast') {
         const t = payload as ToastItem;
@@ -159,29 +169,36 @@ export default function App() {
       try {
         const init = await bridgeApi.getInitialState();
         if (!alive) return;
-        if (init.revisions) {
-          revisionsRef.current = {
-            devices: init.revisions.devices ?? 0,
-            packages: init.revisions.packages ?? 0,
-            task: init.revisions.task ?? 0,
-            settings: init.revisions.settings ?? 0,
-          };
-        }
         setVersion(init.version);
-        setDevices(init.devices);
-        setSelectedDeviceIds(init.selectedDeviceIds);
-        setDeviceErrors(init.deviceErrors);
-        setLastProbeFailed(init.lastProbeFailed);
-        setRefreshing(init.refreshing);
-        setScanning(init.scanning);
-        setFolder(init.folder);
-        setRecentDirs(init.recentDirs);
-        setPackages(init.packages);
-        setTask(init.task);
-        setInstallStatus(init.installStatus);
-        setDeviceProgress(init.deviceProgress);
-        setLogs(init.logs);
-        setSettings(init.settings);
+        if (acceptSnapshotRevision('devices', init.revisions?.devices)) {
+          setDevices(init.devices);
+          setSelectedDeviceIds(init.selectedDeviceIds);
+          setDeviceErrors(init.deviceErrors);
+          setLastProbeFailed(init.lastProbeFailed);
+          setRefreshing(init.refreshing);
+        }
+        if (acceptSnapshotRevision('packages', init.revisions?.packages)) {
+          setScanning(init.scanning);
+          setFolder(init.folder);
+          setRecentDirs(init.recentDirs);
+          setPackages(init.packages);
+        }
+        if (acceptSnapshotRevision('task', init.revisions?.task)) {
+          setTask(init.task);
+          setInstallStatus(init.installStatus);
+          setDeviceProgress(init.deviceProgress);
+        }
+        setLogs((prev) => {
+          if (prev.length === 0) return init.logs;
+          const byId = new Map<number, LogEntry>();
+          for (const item of init.logs) byId.set(item.id, item);
+          for (const item of prev) byId.set(item.id, item);
+          const merged = Array.from(byId.values()).sort((a, b) => a.id - b.id);
+          return merged.length > 2000 ? merged.slice(-2000) : merged;
+        });
+        if (acceptSnapshotRevision('settings', init.revisions?.settings)) {
+          setSettings(init.settings);
+        }
         setTools(init.tools);
         setAppLogTargets(init.appLogTargets);
         setInitError(null);
@@ -199,7 +216,7 @@ export default function App() {
       }
       delete window.__INSTALLER_EVENT__;
     };
-  }, [pushToast, initAttempt]);
+  }, [pushToast, initAttempt, acceptEventRevision, acceptSnapshotRevision]);
 
   // Apply theme & listen to system color scheme changes
   useEffect(() => {
@@ -267,14 +284,21 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [settingsOpen, task, scanning, hasAnyPackage, selectedDeviceIds]);
 
+  const handleCloseSettings = useCallback(() => setSettingsOpen(false), []);
+
   const handleUpdateSettings = async (updates: Partial<AppSettings>) => {
     const prevSettings = settings;
+    const revBefore = revisionsRef.current.settings ?? 0;
     setSettings((prev) => ({ ...prev, ...updates }));
     try {
       const res = await bridgeApi.updateSettings(updates);
-      if (res?.settings) setSettings(res.settings);
+      if (res?.settings && acceptEventRevision('settings', res.settings.rev)) {
+        setSettings(res.settings);
+      }
     } catch (err) {
-      setSettings(prevSettings);
+      if ((revisionsRef.current.settings ?? 0) === revBefore) {
+        setSettings(prevSettings);
+      }
       pushToast({
         id: `settings-err-${Date.now()}`,
         title: '保存设置失败',
@@ -391,11 +415,13 @@ export default function App() {
         open={settingsOpen}
         settings={settings}
         tools={tools}
-        onClose={() => setSettingsOpen(false)}
+        onClose={handleCloseSettings}
         onUpdateSettings={handleUpdateSettings}
         onChooseLogDir={async () => {
           const res = await bridgeApi.chooseLogOutputDir();
-          if (res?.settings) setSettings(res.settings);
+          if (res?.settings && acceptEventRevision('settings', res.settings.rev)) {
+            setSettings(res.settings);
+          }
         }}
         onRefreshDiagnostics={async () => {
           const res = await bridgeApi.diagnoseEnvironment();

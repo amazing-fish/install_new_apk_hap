@@ -91,13 +91,12 @@ class TaskRunner:
         self.spawn(worker)
 
     def _finish(self, task: Task, callback: Callable, value) -> None:
-        with self._lock:
-            task.pending -= 1
         try:
             callback(value)
         finally:
             changed = False
             with self._lock:
+                task.pending -= 1
                 if task.pending == 0 and self.current is task:
                     self.current = None
                     changed = True
