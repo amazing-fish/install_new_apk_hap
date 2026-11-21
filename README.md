@@ -1,6 +1,6 @@
 # install_new_apk_hap
 
-面向 **Android（ADB）** 与 **HarmonyOS（HDC）** 的桌面安装、包元数据解析与日志辅助工具。当前主线基于 v0.10.0 进行界面栈与性能重构（#96，尚未发布版本）：后端为零 Tk 依赖的 Python，界面为 **PyWebView（Windows Edge WebView2）+ React / TypeScript / Tailwind CSS**，安装语义、`-t` 规则、工具解析与内置离线解析工具链保持不变。
+面向 **Android（ADB）** 与 **HarmonyOS（HDC）** 的桌面安装、包元数据解析与日志辅助工具。`v1.0.0` 起完成界面栈与性能重构（#96）：后端为零 Tk 依赖的 Python，界面为 **PyWebView（Windows Edge WebView2）+ React / TypeScript / Tailwind CSS**，安装语义、`-t` 规则、工具解析与内置离线解析工具链保持不变。
 
 ---
 

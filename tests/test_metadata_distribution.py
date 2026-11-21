@@ -1,4 +1,5 @@
 import hashlib
+import io
 import json
 import sys
 import zipfile
@@ -6,6 +7,7 @@ import zipfile
 import pytest
 
 from scripts.build_exe import REQUIRED_FILES, TOOLS, verify_bundle
+from scripts.verify_exe import print_summary_json
 import cli
 
 
@@ -71,3 +73,27 @@ def test_embedded_notices_are_available_without_an_sdk(monkeypatch, tmp_path):
     assert {p.name: p.read_bytes() for p in destination.iterdir()} == {
         name: name.encode() for name in names
     }
+
+
+def test_verify_exe_print_summary_json_handles_cp1252_stdout():
+    raw = io.BytesIO()
+    stream = io.TextIOWrapper(raw, encoding="cp1252")
+    print_summary_json({"packages": [{"name": "Demo 默认名称"}]}, stream=stream)
+    stream.flush()
+    parsed = json.loads(raw.getvalue().decode("cp1252"))
+    assert parsed["packages"][0]["name"] == "Demo 默认名称"
+
+
+def test_env_check_reports_version_web_dist_and_webview_flags(monkeypatch, tmp_path):
+    (tmp_path / "VERSION").write_text("v1.0.0\n", encoding="utf-8")
+    web_dist = tmp_path / "web_dist"
+    web_dist.mkdir()
+    (web_dist / "index.html").write_text("<!doctype html>", encoding="utf-8")
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "_MEIPASS", str(tmp_path), raising=False)
+    out = tmp_path / "env.json"
+    assert cli.run_cli(["--env-check", str(out)]) == 0
+    data = json.loads(out.read_text(encoding="utf-8"))
+    assert data["version"] == "v1.0.0"
+    assert data["web_dist_ready"] is True
+    assert isinstance(data["webview_available"], bool)

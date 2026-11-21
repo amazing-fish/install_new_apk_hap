@@ -1,8 +1,8 @@
 # 变更记录
 
-## Unreleased - refactor / performance（#96）
+## v1.0.0 - refactor / performance
 
-界面栈由 Tkinter / sv-ttk 迁移为 PyWebView（Windows Edge WebView2）+ React / TypeScript / Tailwind CSS；Python 后端不再依赖 Tk。安装语义、`-t` 规则、工具解析、元数据安全边界与日志流程保持不变。
+界面栈由 Tkinter / sv-ttk 迁移为 PyWebView（Windows Edge WebView2）+ React / TypeScript / Tailwind CSS；Python 后端不再依赖 Tk。安装语义、`-t` 规则、工具解析、元数据安全边界与日志流程保持不变（#96 / #97）。
 
 ### 性能
 
@@ -26,6 +26,7 @@
 - 源码目录 `src/` → `backend/`（Python）+ `frontend/`（Web）；Tk 专属测试移除，其余上游测试迁移保留并补充并发 / 流式 / 缓存 / 拖放测试。
 - CI 新增前端构建作业；EXE 构建先编译前端，`verify_exe.py` 改用 `--env-check` 与 `--package-label-report` 验证内置工具。
 - 诊断参数 `--theme-report` 移除（不再使用 ttk 主题），新增 `--env-check`。
+- 修复 `scripts/verify_exe.py` 在 Windows 非 UTF-8 控制台（`cp1252`）输出中文 JSON 崩溃问题，并补充冻结 EXE 对 `VERSION`、`web_dist` 与 `pywebview` 运行时的校验（#98）。
 
 ## v0.10.0 - feature / refactor
 

@@ -16,7 +16,7 @@
 | UI / testOnly 修正 | 3 行设备区、按需滚动条、单行包显示、自动 `testOnly` | #59 / PR #60 | 已合入 |
 | `-t` 状态简化 | 删除手工 `-t` 状态、文件名记忆和 pending gate | #61 / PR #62 | 已合入 |
 | Harmony APP 日志 | 乾崑 / Demo 固定路径直拉，统一“获取APP日志”菜单 | #63 / PR #64 | 已合入 |
-| 界面栈迁移与性能 | Tkinter → PyWebView + React；并行探测/安装、流式输出、元数据持久化缓存 | #96 | 进行中 |
+| 界面栈迁移与性能 | Tkinter → PyWebView + React；并行探测/安装、流式输出、元数据持久化缓存 | #96 / PR #97 | 已合入（v1.0.0） |
 
 ## 当前 UI 结论
 
