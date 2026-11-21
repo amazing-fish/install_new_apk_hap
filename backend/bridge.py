@@ -795,7 +795,7 @@ class InstallerBridge:
                 self._apply_install_preparation_error(task, RuntimeError(message))
                 return
 
-        applied_refresh_id = self._apply_device_refresh(
+        self._apply_device_refresh(
             preflight_devices,
             previous_selection,
             summary_label=f"安装前设备校验完成（耗时 {validation_duration:.2f} 秒）",
@@ -812,20 +812,6 @@ class InstallerBridge:
         if not selection_list and not previous_selection and len(preflight_devices) == 1 and not failed_platforms:
             selection_list = [preflight_devices[0].device_id]
             auto_picked = self._device_label(selection_list[0])
-            with self._state_lock:
-                if (
-                    preflight_refresh_id is None
-                    or (
-                        applied_refresh_id is not None
-                        and self._latest_refresh_request_id == applied_refresh_id
-                    )
-                ) and {d.device_id for d in self.devices} == current_ids:
-                    self.selected_device_ids = list(selection_list)
-                    auto_payload = self._build_devices_payload_locked()
-                else:
-                    auto_payload = None
-        else:
-            auto_payload = None
 
         if missing:
             missing_text = self._device_labels_for_log(sorted(missing))
@@ -833,8 +819,6 @@ class InstallerBridge:
             self._append_log(f"安装提示：已选设备已断开 {missing_text}", "warn")
 
         if auto_picked:
-            if auto_payload is not None:
-                self._emit("devices", auto_payload)
             self._append_log(f"检测到单设备，默认安装到：{auto_picked}", "info")
 
         if not selection_list:

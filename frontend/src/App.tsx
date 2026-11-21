@@ -141,18 +141,23 @@ export default function App() {
         setDeviceProgress(payload.deviceProgress ?? {});
       } else if (type === 'log') {
         const entry = payload as LogEntry;
+        if (entry.preview && isDesktopBridgeAvailable()) return;
         const entryGen = entry.clearGen ?? 0;
         if (entryGen < logClearGenRef.current) return;
         if (entryGen > logClearGenRef.current) {
           logClearGenRef.current = entryGen;
         }
+        const dropPreview = !entry.preview && isDesktopBridgeAvailable();
         setLogs((prev) => {
           const minGen = logClearGenRef.current;
           if (entryGen < minGen) return prev;
-          const base =
+          let base =
             prev.length > 0 && (prev[0].clearGen ?? 0) < minGen
               ? prev.filter((item) => (item.clearGen ?? 0) >= minGen)
               : prev;
+          if (dropPreview && base.some((item) => item.preview)) {
+            base = base.filter((item) => !item.preview);
+          }
           if (base.length === 0 || entry.id > base[base.length - 1].id) {
             const next = [...base, entry];
             return next.length > 2000 ? next.slice(-2000) : next;
@@ -216,14 +221,19 @@ export default function App() {
           setInstallStatus(init.installStatus);
           setDeviceProgress(init.deviceProgress);
         }
+        const isDesktop = isDesktopBridgeAvailable();
         const initGen = init.logClearGen ?? 0;
         if (initGen > logClearGenRef.current) {
           logClearGenRef.current = initGen;
         }
         setLogs((prev) => {
           const minGen = logClearGenRef.current;
-          const liveFiltered = prev.filter((item) => (item.clearGen ?? 0) >= minGen);
-          const initFiltered = init.logs.filter((item) => (item.clearGen ?? 0) >= minGen);
+          const liveFiltered = prev.filter(
+            (item) => (!isDesktop || !item.preview) && (item.clearGen ?? 0) >= minGen,
+          );
+          const initFiltered = init.logs.filter(
+            (item) => (!isDesktop || !item.preview) && (item.clearGen ?? 0) >= minGen,
+          );
           if (liveFiltered.length === 0) return initFiltered;
           const byId = new Map<number, LogEntry>();
           for (const item of initFiltered) byId.set(item.id, item);

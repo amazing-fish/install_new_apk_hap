@@ -57,6 +57,7 @@ export type LogLevel = 'info' | 'cmd' | 'success' | 'warn' | 'error';
 export interface LogEntry {
   id: number;
   clearGen?: number;
+  preview?: boolean;
   timestamp: string;
   level: LogLevel;
   message: string;

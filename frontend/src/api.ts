@@ -172,11 +172,12 @@ function createPreviewMockState(): InitialAppState {
     installStatus: '就绪',
     deviceProgress: {},
     logs: [
-      { id: 1, timestamp: '11:50:01', level: 'info', message: '设备列表已刷新：Android 2 台，Harmony 1 台，总计 3 台', deviceId: null },
-      { id: 2, timestamp: '11:50:01', level: 'success', message: '新增设备已置顶高亮：测试主力机 S24', deviceId: 'R5CW90ABCDE' },
-      { id: 3, timestamp: '11:50:02', level: 'info', message: '安装包扫描完成：D:\\Builds\\Release\\2026-11-21 · APK=app-release-1.4.2.apk，HAP=entry-default-signed.hap', deviceId: null },
-      { id: 4, timestamp: '11:50:02', level: 'cmd', message: '预览模式：当前运行在浏览器中（未连接 PyWebView 桌面容器）', deviceId: null },
+      { id: 1, preview: true, timestamp: '11:50:01', level: 'info', message: '设备列表已刷新：Android 2 台，Harmony 1 台，总计 3 台', deviceId: null },
+      { id: 2, preview: true, timestamp: '11:50:01', level: 'success', message: '新增设备已置顶高亮：测试主力机 S24', deviceId: 'R5CW90ABCDE' },
+      { id: 3, preview: true, timestamp: '11:50:02', level: 'info', message: '安装包扫描完成：D:\\Builds\\Release\\2026-11-21 · APK=app-release-1.4.2.apk，HAP=entry-default-signed.hap', deviceId: null },
+      { id: 4, preview: true, timestamp: '11:50:02', level: 'cmd', message: '预览模式：当前运行在浏览器中（未连接 PyWebView 桌面容器）', deviceId: null },
     ],
+    logClearGen: 0,
     settings: {
       theme: 'system',
       logOutputDir: '',
@@ -207,6 +208,7 @@ function emitMock(type: InstallerEvent['type'], payload: any) {
 export const bridgeApi = {
   async getInitialState(): Promise<InitialAppState> {
     if (window.pywebview?.api) {
+      mockState = null;
       return window.pywebview.api.get_initial_state();
     }
     mockLogClearGen = 0;
@@ -221,11 +223,12 @@ export const bridgeApi = {
     if (!mockState) return { ok: true };
     emitMock('devices', { ...mockState, refreshing: true });
     setTimeout(() => {
-      if (!mockState) return;
+      if (!mockState || isDesktopBridgeAvailable()) return;
       emitMock('devices', { ...mockState, refreshing: false });
       emitMock('log', {
         id: Date.now(),
         clearGen: mockLogClearGen,
+        preview: true,
         timestamp: new Date().toTimeString().slice(0, 8),
         level: 'info',
         message: '预览模式：已完成模拟并行刷新（ADB + HDC）',
