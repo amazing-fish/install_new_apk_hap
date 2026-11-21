@@ -8,6 +8,7 @@ import subprocess
 import threading
 from typing import Callable, Dict, Iterable, List, Optional, Sequence
 
+from infra.tools import ToolError
 from platforms import DeviceInfo, driver_for
 from platforms.base import InstallResult, PlatformDriver
 
@@ -53,6 +54,7 @@ class TaskRunner:
         self.spawn = spawn
         self.on_change = on_change
         self._lock = threading.RLock()
+        self._cond = threading.Condition(self._lock)
         self.current: Optional[Task] = None
 
     @property
@@ -99,16 +101,25 @@ class TaskRunner:
                 if task.pending == 0 and self.current is task:
                     self.current = None
                     changed = True
+                    self._cond.notify_all()
             if changed:
                 self.on_change()
 
-    def cancel(self) -> bool:
+    def cancel(self, expected: Optional[Task] = None) -> bool:
         with self._lock:
-            if self.current is None or self.current.cancelled:
+            if (
+                self.current is None
+                or (expected is not None and self.current is not expected)
+                or self.current.cancelled
+            ):
                 return False
             self.current.cancel.set()
         self.on_change()
         return True
+
+    def wait_idle(self, timeout: float = 10.0) -> bool:
+        with self._cond:
+            return self._cond.wait_for(lambda: self.current is None, timeout=timeout)
 
     def background(
         self,
@@ -206,7 +217,13 @@ def _install_single_target(
         return "skipped"
 
     driver = target.driver
-    command = driver.install_command(target.device_id, target.package, allow_test=allow_test)
+    try:
+        command = driver.install_command(target.device_id, target.package, allow_test=allow_test)
+    except ToolError as error:
+        log(f"{driver.label} {target.label} 安装失败（{error}）", "error", target.device_id)
+        if on_progress:
+            on_progress(target.device_id, "failed", str(error), None)
+        return "failed"
     log(f"{driver.label} {target.label} 开始执行: {format_command_for_log(command)}", "cmd", target.device_id)
     if on_progress:
         on_progress(target.device_id, "installing", f"正在安装 {target.package.name}", None)

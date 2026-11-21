@@ -71,11 +71,13 @@ export function LogConsole({ logs, onClear, onCopyLogs }: LogConsoleProps) {
     });
   }, [logs, levelFilter, query]);
 
+  const lastLogId = filtered.length > 0 ? filtered[filtered.length - 1].id : 0;
+
   useEffect(() => {
     if (autoScroll && !collapsed && scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [filtered.length, autoScroll, collapsed]);
+  }, [filtered.length, lastLogId, autoScroll, collapsed]);
 
   const handleCopy = () => {
     const text = filtered.map((l) => `[${l.timestamp}] [${l.level.toUpperCase()}] ${l.message}`).join('\n');

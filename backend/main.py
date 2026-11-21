@@ -71,10 +71,14 @@ def launch_desktop(dev_url: Optional[str] = None, debug: bool = False) -> int:
     def _on_loaded():
         _bind_native_drop(window, bridge)
 
+    def _on_closing():
+        bridge.close()
+
     def _on_closed():
         bridge.close()
 
     window.events.loaded += _on_loaded
+    window.events.closing += _on_closing
     window.events.closed += _on_closed
 
     gui_backend = "edgechromium" if os.name == "nt" else None

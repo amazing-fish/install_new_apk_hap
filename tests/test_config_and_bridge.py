@@ -1,12 +1,18 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+import threading
 import time
+import types
 import zipfile
 
-from bridge import InstallerBridge
+from bridge import InstallerBridge, _folder_dialog_type
 from config_manager import ConfigManager
+from metadata import PackageLabel
+from metadata.cache import PersistentMetadataCache
+from platforms import DeviceDetectionResult, DeviceInfo
 
 
 def test_config_manager_atomic_save_and_corrupt_backup(tmp_path: Path):
@@ -72,9 +78,177 @@ def test_bridge_scan_and_drag_drop_selects_dropped_package(tmp_path: Path):
         state = bridge.get_initial_state()
         hap_slot = state["packages"]["HAP"]
         assert len(hap_slot["candidates"]) == 2
+        assert hap_slot["selectedIndex"] >= 0
         selected = hap_slot["candidates"][hap_slot["selectedIndex"]]
         assert selected["filename"] == "older.hap"
         assert selected["appName"] == "旧应用"
         assert selected["packageName"] == "com.test.demo"
     finally:
         bridge.close()
+
+
+def test_folder_dialog_type_supports_pywebview_5_and_6():
+    v6 = types.SimpleNamespace(FileDialog=types.SimpleNamespace(FOLDER="fd-v6"))
+    v5 = types.SimpleNamespace(FOLDER_DIALOG="fd-v5")
+    assert _folder_dialog_type(v6) == "fd-v6"
+    assert _folder_dialog_type(v5) == "fd-v5"
+
+
+def test_bridge_close_cancels_active_task_and_waits(tmp_path: Path):
+    bridge = InstallerBridge(config_path=tmp_path / "cfg.json", emit=lambda *_: None, auto_start=False)
+    task = bridge.tasks.start("install", "安装", verb="")
+    assert task is not None
+    finished = threading.Event()
+
+    def long_work():
+        task.cancel.wait(timeout=5.0)
+        finished.set()
+        return "done"
+
+    bridge.tasks.run(task, long_work, lambda _r: None, lambda _e: None)
+    bridge.close(timeout=3.0)
+    assert task.cancelled is True
+    assert finished.is_set()
+    assert not bridge.tasks.busy
+
+
+def test_bridge_stale_device_refresh_ignored_and_failed_scan_preserves_folder(tmp_path: Path):
+    dir_a = tmp_path / "dir_a"
+    dir_b = tmp_path / "dir_b"
+    dir_a.mkdir()
+    dir_b.mkdir()
+    (dir_a / "app_a.apk").write_bytes(b"apk-a")
+
+    bridge = InstallerBridge(config_path=tmp_path / "cfg.json", emit=lambda *_: None, auto_start=False)
+    try:
+        # Stale refresh_request_id cannot overwrite newer device list
+        bridge._latest_refresh_request_id = 2
+        bridge._apply_device_refresh_result(
+            1, DeviceDetectionResult(devices=[DeviceInfo("old-dev", "android", "device")])
+        )
+        assert bridge.devices == []
+
+        # Scan dir_a synchronously via inline spawn
+        bridge.tasks.spawn = lambda fn: fn()
+        assert bridge.scan_folder(str(dir_a))["ok"] is True
+        assert bridge.folder == str(dir_a)
+        assert bridge.packages["APK"].selected.name == "app_a.apk"
+
+        # Failed scan of missing dir_b must keep folder=dir_a and its APK slot
+        res_bad = bridge.scan_folder(str(tmp_path / "does_not_exist"))
+        assert res_bad["ok"] is False
+        assert bridge.folder == str(dir_a)
+        assert bridge.packages["APK"].selected.name == "app_a.apk"
+
+        # start_install is blocked while scanning is True
+        bridge.scanning = True
+        assert bridge.start_install([])["ok"] is False
+        bridge.scanning = False
+    finally:
+        bridge.close()
+
+
+def test_bridge_config_permission_error_does_not_block_scan(tmp_path: Path, monkeypatch):
+    pkg_dir = tmp_path / "pkgs"
+    pkg_dir.mkdir()
+    (pkg_dir / "demo.apk").write_bytes(b"apk")
+
+    bridge = InstallerBridge(config_path=tmp_path / "cfg.json", emit=lambda *_: None, auto_start=False)
+    try:
+        bridge.tasks.spawn = lambda fn: fn()
+        monkeypatch.setattr(
+            bridge.config_manager,
+            "set_last_scan_dir",
+            lambda _p: (_ for _ in ()).throw(PermissionError("read-only config")),
+        )
+        res = bridge.scan_folder(str(pkg_dir), remember=True)
+        assert res["ok"] is True
+        assert bridge.scanning is False
+        assert bridge.folder == str(pkg_dir)
+        assert bridge.packages["APK"].selected.name == "demo.apk"
+    finally:
+        bridge.close()
+
+
+def test_bridge_select_package_rejects_stale_revision(tmp_path: Path):
+    (tmp_path / "a.apk").write_bytes(b"a")
+    (tmp_path / "b.apk").write_bytes(b"b")
+    bridge = InstallerBridge(config_path=tmp_path / "cfg.json", emit=lambda *_: None, auto_start=False)
+    try:
+        bridge.tasks.spawn = lambda fn: fn()
+        bridge.scan_folder(str(tmp_path))
+        rev1 = bridge.packages["APK"].revision
+        bridge.scan_folder(str(tmp_path))
+        rev2 = bridge.packages["APK"].revision
+        assert rev2 > rev1
+        stale = bridge.select_package("APK", 1, revision=rev1)
+        assert stale["ok"] is False and stale.get("stale") is True
+        fresh = bridge.select_package("APK", 1, revision=rev2)
+        assert fresh["ok"] is True
+    finally:
+        bridge.close()
+
+
+def test_finalize_install_never_substitutes_disconnected_selection_and_uses_preflight_snapshot(
+    tmp_path: Path, monkeypatch
+):
+    import bridge as bridge_mod
+
+    (tmp_path / "app.apk").write_bytes(b"apk")
+    bridge = InstallerBridge(config_path=tmp_path / "cfg.json", emit=lambda *_: None, auto_start=False)
+    try:
+        bridge.tasks.spawn = lambda fn: fn()
+        bridge.scan_folder(str(tmp_path))
+        dev_a = DeviceInfo("dev-a", "android", "device")
+        dev_b = DeviceInfo("dev-b", "android", "device")
+        bridge._apply_device_refresh([dev_a, dev_b])
+
+        planned: list[list[str]] = []
+        monkeypatch.setattr(
+            bridge_mod,
+            "run_install_plan",
+            lambda plan, *_args, **_kw: planned.append([t.device_id for t in plan]) or bridge_mod.InstallOutcome(),
+        )
+
+        # User explicitly selected dev-a, but preflight sees only dev-b -> must NOT install on dev-b!
+        task = bridge.tasks.start("install", "安装", verb="")
+        bridge._finalize_install(
+            task,
+            DeviceDetectionResult(devices=[dev_b]),
+            previous_selection={"dev-a"},
+            packages=bridge._selected_packages(),
+            allow_test=True,
+            parallel=False,
+            max_concurrency=1,
+            validation_duration=0.01,
+        )
+        assert planned == []
+        assert any("已选设备均已断开" in entry["message"] for entry in bridge._logs)
+    finally:
+        bridge.close()
+
+
+def test_persistent_metadata_cache_serializes_concurrent_flushes(tmp_path: Path):
+    cache_path = tmp_path / "meta.json"
+    cache = PersistentMetadataCache(cache_path=cache_path)
+    for i in range(20):
+        cache.put(f"k{i}", PackageLabel(name=f"App{i}", status="resolved"))
+
+    errors: list[Exception] = []
+
+    def do_flush():
+        try:
+            for _ in range(5):
+                cache.put(f"extra-{threading.get_ident()}", PackageLabel(name="X", status="resolved"))
+                cache.flush()
+        except Exception as exc:
+            errors.append(exc)
+
+    threads = [threading.Thread(target=do_flush) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert not errors
+    reloaded = PersistentMetadataCache(cache_path=cache_path)
+    assert reloaded.get("k0") is not None

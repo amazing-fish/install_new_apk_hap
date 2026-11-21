@@ -8,7 +8,7 @@ interface PyWebViewAPI {
   choose_folder: () => Promise<{ ok: boolean; cancelled?: boolean; error?: string }>;
   scan_folder: (folderPath: string) => Promise<{ ok: boolean; error?: string }>;
   handle_dropped_paths: (paths: string[]) => Promise<{ ok: boolean; error?: string }>;
-  select_package: (kind: string, index: number) => Promise<{ ok: boolean; error?: string }>;
+  select_package: (kind: string, index: number, revision?: number) => Promise<{ ok: boolean; error?: string; stale?: boolean }>;
   start_install: (deviceIds?: string[]) => Promise<{ ok: boolean; error?: string }>;
   cancel_task: () => Promise<{ ok: boolean }>;
   fetch_udid: (deviceId?: string) => Promise<{ ok: boolean }>;
@@ -303,9 +303,11 @@ export const bridgeApi = {
     return { ok: true };
   },
 
-  async selectPackage(kind: string, index: number) {
+  async selectPackage(kind: string, index: number, revision?: number) {
     if (window.pywebview?.api) {
-      return window.pywebview.api.select_package(kind, index);
+      return revision !== undefined
+        ? window.pywebview.api.select_package(kind, index, revision)
+        : window.pywebview.api.select_package(kind, index);
     }
     if (mockState && mockState.packages[kind]) {
       mockState.packages[kind].selectedIndex = index;

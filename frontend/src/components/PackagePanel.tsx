@@ -25,7 +25,7 @@ interface PackagePanelProps {
   onChooseFolder: () => void;
   onScanFolder: (folder: string) => void;
   onOpenFolder: (folder: string) => void;
-  onSelectPackage: (kind: string, index: number) => void;
+  onSelectPackage: (kind: string, index: number, revision?: number) => void;
   onCopyText: (text: string, label: string) => void;
 }
 
@@ -177,14 +177,14 @@ export function PackagePanel({
           slot={apkSlot}
           accent="emerald"
           platformTag="Android · APK"
-          onSelect={(idx) => onSelectPackage('APK', idx)}
+          onSelect={(idx) => onSelectPackage('APK', idx, apkSlot.revision)}
           onCopyText={onCopyText}
         />
         <PackageSlotCard
           slot={hapSlot}
           accent="sky"
           platformTag="Harmony · HAP"
-          onSelect={(idx) => onSelectPackage('HAP', idx)}
+          onSelect={(idx) => onSelectPackage('HAP', idx, hapSlot.revision)}
           onCopyText={onCopyText}
         />
       </div>

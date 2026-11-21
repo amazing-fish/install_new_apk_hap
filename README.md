@@ -113,6 +113,7 @@ python backend/main.py --dev-url http://localhost:5173 --debug
 ### 运行后端单元测试
 
 ```powershell
+python -m pip install -r requirements.txt pytest
 python -m pytest -v -p no:cacheprovider
 ```
 

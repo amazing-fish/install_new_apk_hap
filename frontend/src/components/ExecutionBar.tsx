@@ -5,6 +5,7 @@ interface ExecutionBarProps {
   devices: DeviceItem[];
   selectedDeviceIds: string[];
   task: ActiveTask | null;
+  scanning: boolean;
   installStatus: string;
   parallelInstall: boolean;
   maxConcurrency: number;
@@ -17,6 +18,7 @@ export function ExecutionBar({
   devices,
   selectedDeviceIds,
   task,
+  scanning,
   installStatus,
   parallelInstall,
   maxConcurrency,
@@ -82,8 +84,9 @@ export function ExecutionBar({
 
       <button
         type="button"
-        disabled={isCancelling || (!isRunning && !hasAnyPackage)}
+        disabled={isCancelling || (!isRunning && (!hasAnyPackage || scanning))}
         onClick={onPrimaryAction}
+        title={scanning && !isRunning ? '正在扫描安装包目录，请稍候…' : undefined}
         className={`flex h-10 shrink-0 items-center gap-2 rounded-xl px-5 text-[13px] font-semibold shadow-sm transition-all active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer ${
           isRunning
             ? 'bg-rose-600 text-white shadow-rose-600/25 hover:bg-rose-700'
@@ -94,6 +97,11 @@ export function ExecutionBar({
           <>
             {isCancelling ? <Loader2 className="h-4 w-4 animate-spin" /> : <OctagonX className="h-4 w-4" />}
             <span>{isCancelling ? '正在中止…' : `中止${task!.label}`}</span>
+          </>
+        ) : scanning ? (
+          <>
+            <Loader2 className="h-4 w-4 animate-spin" />
+            <span>扫描安装包中…</span>
           </>
         ) : (
           <>

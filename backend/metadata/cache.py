@@ -27,6 +27,7 @@ class PersistentMetadataCache:
         self._path = cache_path
         self._max_entries = max_entries
         self._lock = threading.Lock()
+        self._flush_lock = threading.Lock()
         self._entries: "OrderedDict[str, PackageLabel]" = OrderedDict()
         self._dirty = False
         if self._path is not None:
@@ -71,28 +72,29 @@ class PersistentMetadataCache:
     def flush(self) -> None:
         if self._path is None:
             return
-        with self._lock:
-            if not self._dirty:
-                return
-            snapshot = [[k, v.to_dict()] for k, v in self._entries.items()]
-            self._dirty = False
-        try:
-            self._path.parent.mkdir(parents=True, exist_ok=True)
-            fd, tmp_name = tempfile.mkstemp(
-                prefix=self._path.name + ".",
-                suffix=".tmp",
-                dir=self._path.parent,
-            )
+        with self._flush_lock:
+            with self._lock:
+                if not self._dirty:
+                    return
+                snapshot = [[k, v.to_dict()] for k, v in self._entries.items()]
+                self._dirty = False
             try:
-                with os.fdopen(fd, "w", encoding="utf-8") as handle:
-                    json.dump({"schema": CACHE_SCHEMA_VERSION, "entries": snapshot}, handle, ensure_ascii=False)
-                    handle.flush()
-                os.replace(tmp_name, self._path)
-            except BaseException:
+                self._path.parent.mkdir(parents=True, exist_ok=True)
+                fd, tmp_name = tempfile.mkstemp(
+                    prefix=self._path.name + ".",
+                    suffix=".tmp",
+                    dir=self._path.parent,
+                )
                 try:
-                    os.unlink(tmp_name)
-                except OSError:
-                    pass
-                raise
-        except OSError:
-            pass
+                    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                        json.dump({"schema": CACHE_SCHEMA_VERSION, "entries": snapshot}, handle, ensure_ascii=False)
+                        handle.flush()
+                    os.replace(tmp_name, self._path)
+                except BaseException:
+                    try:
+                        os.unlink(tmp_name)
+                    except OSError:
+                        pass
+                    raise
+            except OSError:
+                pass

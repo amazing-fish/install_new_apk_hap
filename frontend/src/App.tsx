@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Loader2, Upload } from 'lucide-react';
-import { bridgeApi, waitForBridge } from './api';
+import { AlertTriangle, Loader2, RefreshCw, Upload } from 'lucide-react';
+import { bridgeApi, isDesktopBridgeAvailable, waitForBridge } from './api';
 import { DevicePanel } from './components/DevicePanel';
 import { ExecutionBar } from './components/ExecutionBar';
 import { HeaderBar } from './components/HeaderBar';
@@ -31,6 +31,8 @@ function applyThemeClass(mode: ThemeMode) {
 
 export default function App() {
   const [ready, setReady] = useState(false);
+  const [initError, setInitError] = useState<string | null>(null);
+  const [initAttempt, setInitAttempt] = useState(0);
   const [version, setVersion] = useState('1.0.0');
   const [devices, setDevices] = useState<DeviceItem[]>([]);
   const [selectedDeviceIds, setSelectedDeviceIds] = useState<string[]>([]);
@@ -58,6 +60,12 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [draggingOver, setDraggingOver] = useState(false);
   const dragDepthRef = useRef(0);
+  const revisionsRef = useRef<Record<string, number>>({
+    devices: 0,
+    packages: 0,
+    task: 0,
+    settings: 0,
+  });
 
   const pushToast = useCallback((toast: ToastItem) => {
     setToasts((prev) => [...prev.slice(-3), toast]);
@@ -91,20 +99,31 @@ export default function App() {
 
   // Subscribe to backend push events + load initial snapshot
   useEffect(() => {
+    const isFreshRevision = (channel: string, payload: any): boolean => {
+      if (typeof payload?.rev !== 'number') return true;
+      const current = revisionsRef.current[channel] ?? 0;
+      if (payload.rev <= current) return false;
+      revisionsRef.current[channel] = payload.rev;
+      return true;
+    };
+
     window.__INSTALLER_EVENT__ = (event: InstallerEvent) => {
       const { type, payload } = event;
       if (type === 'devices') {
+        if (!isFreshRevision('devices', payload)) return;
         setDevices(payload.devices ?? []);
         setSelectedDeviceIds(payload.selectedDeviceIds ?? []);
         setDeviceErrors(payload.deviceErrors ?? {});
         setLastProbeFailed(Boolean(payload.lastProbeFailed));
         setRefreshing(Boolean(payload.refreshing));
       } else if (type === 'packages') {
+        if (!isFreshRevision('packages', payload)) return;
         setFolder(payload.folder ?? '');
         setRecentDirs(payload.recentDirs ?? []);
         setScanning(Boolean(payload.scanning));
         setPackages(payload.packages ?? {});
       } else if (type === 'task') {
+        if (!isFreshRevision('task', payload)) return;
         setTask(payload.task ?? null);
         setInstallStatus(payload.installStatus ?? '就绪');
         setDeviceProgress(payload.deviceProgress ?? {});
@@ -116,6 +135,7 @@ export default function App() {
       } else if (type === 'logs_cleared') {
         setLogs([]);
       } else if (type === 'settings') {
+        if (!isFreshRevision('settings', payload)) return;
         setSettings(payload as AppSettings);
       } else if (type === 'toast') {
         const t = payload as ToastItem;
@@ -127,10 +147,26 @@ export default function App() {
     };
 
     let alive = true;
-    waitForBridge().then(async () => {
+    let lateReadyHandler: (() => void) | null = null;
+    waitForBridge().then(async (bridgeReady) => {
+      if (!alive) return;
+      if (!bridgeReady && !isDesktopBridgeAvailable()) {
+        lateReadyHandler = () => {
+          if (alive) setInitAttempt((n) => n + 1);
+        };
+        window.addEventListener('pywebviewready', lateReadyHandler, { once: true });
+      }
       try {
         const init = await bridgeApi.getInitialState();
         if (!alive) return;
+        if (init.revisions) {
+          revisionsRef.current = {
+            devices: init.revisions.devices ?? 0,
+            packages: init.revisions.packages ?? 0,
+            task: init.revisions.task ?? 0,
+            settings: init.revisions.settings ?? 0,
+          };
+        }
         setVersion(init.version);
         setDevices(init.devices);
         setSelectedDeviceIds(init.selectedDeviceIds);
@@ -148,16 +184,22 @@ export default function App() {
         setSettings(init.settings);
         setTools(init.tools);
         setAppLogTargets(init.appLogTargets);
-      } finally {
-        if (alive) setReady(true);
+        setInitError(null);
+        setReady(true);
+      } catch (err) {
+        if (!alive) return;
+        setInitError(err instanceof Error ? err.message : String(err));
       }
     });
 
     return () => {
       alive = false;
+      if (lateReadyHandler) {
+        window.removeEventListener('pywebviewready', lateReadyHandler);
+      }
       delete window.__INSTALLER_EVENT__;
     };
-  }, [pushToast]);
+  }, [pushToast, initAttempt]);
 
   // Apply theme & listen to system color scheme changes
   useEffect(() => {
@@ -213,7 +255,7 @@ export default function App() {
         bridgeApi.refreshDevices(true);
       } else if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
         e.preventDefault();
-        if (!task && hasAnyPackage) {
+        if (!task && !scanning && hasAnyPackage) {
           bridgeApi.startInstall(selectedDeviceIds);
         }
       } else if (e.key === 'Escape' && task && !task.cancelled) {
@@ -223,15 +265,48 @@ export default function App() {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [settingsOpen, task, hasAnyPackage, selectedDeviceIds]);
+  }, [settingsOpen, task, scanning, hasAnyPackage, selectedDeviceIds]);
 
   const handleUpdateSettings = async (updates: Partial<AppSettings>) => {
+    const prevSettings = settings;
     setSettings((prev) => ({ ...prev, ...updates }));
-    const res = await bridgeApi.updateSettings(updates);
-    if (res?.settings) setSettings(res.settings);
+    try {
+      const res = await bridgeApi.updateSettings(updates);
+      if (res?.settings) setSettings(res.settings);
+    } catch (err) {
+      setSettings(prevSettings);
+      pushToast({
+        id: `settings-err-${Date.now()}`,
+        title: '保存设置失败',
+        message: err instanceof Error ? err.message : String(err),
+        variant: 'error',
+      });
+    }
   };
 
   if (!ready) {
+    if (initError) {
+      return (
+        <div className="flex h-full items-center justify-center bg-[var(--surface-canvas)] p-6 text-[var(--ink-primary)]">
+          <div className="flex max-w-md flex-col items-center gap-3 rounded-2xl border border-rose-500/30 bg-[var(--surface-card)] p-6 text-center shadow-lg">
+            <AlertTriangle className="h-7 w-7 text-rose-500" />
+            <div className="text-[14px] font-semibold">初始化桌面工作区失败</div>
+            <p className="break-all text-[12px] text-[var(--ink-secondary)]">{initError}</p>
+            <button
+              type="button"
+              onClick={() => {
+                setInitError(null);
+                setInitAttempt((n) => n + 1);
+              }}
+              className="mt-1 inline-flex items-center gap-1.5 rounded-lg bg-blue-600 px-4 py-1.5 text-[12.5px] font-semibold text-white hover:bg-blue-700 cursor-pointer"
+            >
+              <RefreshCw className="h-3.5 w-3.5" />
+              <span>重试初始化</span>
+            </button>
+          </div>
+        </div>
+      );
+    }
     return (
       <div className="flex h-full items-center justify-center bg-[var(--surface-canvas)] text-[var(--ink-secondary)]">
         <div className="flex items-center gap-2.5 text-[13px] font-medium">
@@ -283,7 +358,7 @@ export default function App() {
           onChooseFolder={() => bridgeApi.chooseFolder()}
           onScanFolder={(dir) => bridgeApi.scanFolder(dir)}
           onOpenFolder={(dir) => bridgeApi.openPathInExplorer(dir)}
-          onSelectPackage={(kind, index) => bridgeApi.selectPackage(kind, index)}
+          onSelectPackage={(kind, index, revision) => bridgeApi.selectPackage(kind, index, revision)}
           onCopyText={(text, label) => copyToClipboard(text, label)}
         />
 
@@ -300,6 +375,7 @@ export default function App() {
         devices={devices}
         selectedDeviceIds={selectedDeviceIds}
         task={task}
+        scanning={scanning}
         installStatus={installStatus}
         parallelInstall={settings.parallelInstall}
         maxConcurrency={settings.maxConcurrency}

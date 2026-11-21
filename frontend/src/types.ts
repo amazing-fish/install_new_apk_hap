@@ -33,6 +33,7 @@ export interface PackageCandidateItem {
 
 export interface PackageSlotState {
   kind: 'APK' | 'HAP' | string;
+  revision?: number;
   selectedIndex: number;
   allowTest: boolean | null;
   candidates: PackageCandidateItem[];
@@ -112,6 +113,12 @@ export interface InitialAppState {
   settings: AppSettings;
   tools: Record<string, ToolDiagnostic>;
   appLogTargets: AppLogTargetItem[];
+  revisions?: {
+    devices: number;
+    packages: number;
+    task: number;
+    settings: number;
+  };
 }
 
 export interface InstallerEvent {

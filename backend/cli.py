@@ -5,6 +5,7 @@ import argparse
 from dataclasses import asdict
 import hashlib
 import json
+import os
 from pathlib import Path
 import shutil
 
@@ -43,7 +44,10 @@ def run_cli(arguments: list[str]) -> int:
     if not args.packages:
         parser.error("provide at least one package path")
     output = args.package_label_report.resolve()
-    if output in {path.resolve() for path in args.packages}:
+    is_same_file = output in {path.resolve() for path in args.packages} or (
+        output.exists() and any(path.exists() and os.path.samefile(output, path) for path in args.packages)
+    )
+    if is_same_file:
         parser.error("the output report must not overwrite an input package")
     tools = resolve_metadata_tools()
     rows = [dict(path=str(path.resolve()), **asdict(read_package_label(path, tools))) for path in args.packages]

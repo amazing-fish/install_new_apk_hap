@@ -342,15 +342,14 @@ export function DevicePanel({
                 }`}
               >
                 {/* Checkbox */}
-                <div
-                  className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border transition-all ${
-                    isSelected
-                      ? 'border-blue-600 bg-blue-600 text-white dark:border-blue-500 dark:bg-blue-500'
-                      : 'border-slate-300 bg-transparent dark:border-slate-600'
-                  }`}
-                >
-                  {isSelected && <Check className="h-3 w-3 stroke-[3]" />}
-                </div>
+                <input
+                  type="checkbox"
+                  checked={isSelected}
+                  onChange={() => toggleSelect(device.deviceId)}
+                  onClick={(e) => e.stopPropagation()}
+                  aria-label={`选择设备 ${device.name || device.model || device.deviceId}`}
+                  className="h-4 w-4 shrink-0 rounded border-slate-300 text-blue-600 accent-blue-600 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/40 dark:border-slate-600 cursor-pointer"
+                />
 
                 {/* Platform badge */}
                 <span

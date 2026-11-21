@@ -58,6 +58,13 @@ def default_config_path() -> Path:
     return base_dir / "install_new_apk_hap" / "app_config.json"
 
 
+def _folder_dialog_type(webview_module):
+    file_dialog = getattr(webview_module, "FileDialog", None)
+    if file_dialog is not None:
+        return file_dialog.FOLDER
+    return webview_module.FOLDER_DIALOG
+
+
 class InstallerBridge:
     """Exposes RPC methods to the frontend and pushes live events back."""
 
@@ -84,13 +91,15 @@ class InstallerBridge:
         self.last_probe_failed = False
         self.refreshing = False
         self.scanning = False
-        self.folder: str = self.config_manager.data.get("last_scan_dir", "")
+        self.folder: str = ""
         self.packages: Dict[str, PackageSlot] = {kind: PackageSlot() for kind in PACKAGE_KINDS}
         self.install_status = "就绪"
         self.device_progress: Dict[str, Dict[str, Any]] = {}
 
         self._logs: List[Dict[str, Any]] = []
         self._log_seq = 0
+        self._event_revs: Dict[str, int] = {"devices": 0, "packages": 0, "task": 0, "settings": 0}
+        self._closed = False
         self._device_ids_before_last_refresh: Optional[Set[str]] = None
         self._latest_refresh_request_id = 0
         self._latest_scan_request_id = 0
@@ -103,9 +112,10 @@ class InstallerBridge:
 
         if auto_start:
             self.refresh_devices()
-            if self.folder:
-                self._append_log(f"加载上次扫描目录: {self.folder}", "info")
-                self.scan_folder(self.folder, remember=False, silent_empty=True)
+            last_dir = str(self.config_manager.data.get("last_scan_dir", "")).strip()
+            if last_dir:
+                self._append_log(f"加载上次扫描目录: {last_dir}", "info")
+                self.scan_folder(last_dir, remember=False, silent_empty=True)
 
     # ---- Window & event plumbing -------------------------------------------------
 
@@ -131,7 +141,15 @@ class InstallerBridge:
         except Exception:
             pass
 
-    def close(self) -> None:
+    def close(self, timeout: float = 10.0) -> None:
+        with self._state_lock:
+            if self._closed:
+                return
+            self._closed = True
+            self._window = None
+        if self.tasks.busy:
+            self.tasks.cancel()
+            self.tasks.wait_idle(timeout=timeout)
         self._package_label_loader.close()
 
     # ---- Logging & Toast helpers -------------------------------------------------
@@ -241,34 +259,51 @@ class InstallerBridge:
                 )
         return items
 
+    def _next_rev_locked(self, channel: str) -> int:
+        rev = self._event_revs.get(channel, 0) + 1
+        self._event_revs[channel] = rev
+        return rev
+
+    def _build_devices_payload_locked(self) -> Dict[str, Any]:
+        return {
+            "rev": self._next_rev_locked("devices"),
+            "devices": self._serialize_devices(),
+            "selectedDeviceIds": list(self.selected_device_ids),
+            "deviceErrors": dict(self.device_errors),
+            "lastProbeFailed": self.last_probe_failed,
+            "refreshing": self.refreshing,
+        }
+
+    def _build_packages_payload_locked(self) -> Dict[str, Any]:
+        return {
+            "rev": self._next_rev_locked("packages"),
+            "folder": self.folder,
+            "recentDirs": list(self.config_manager.data.get("recent_dirs", [])),
+            "scanning": self.scanning,
+            "packages": self._serialize_packages(),
+        }
+
+    def _build_task_payload_locked(self) -> Dict[str, Any]:
+        return {
+            "rev": self._next_rev_locked("task"),
+            "task": self._serialize_task(),
+            "installStatus": self.install_status,
+            "deviceProgress": dict(self.device_progress),
+        }
+
     def _emit_devices_state(self) -> None:
         with self._state_lock:
-            payload = {
-                "devices": self._serialize_devices(),
-                "selectedDeviceIds": list(self.selected_device_ids),
-                "deviceErrors": dict(self.device_errors),
-                "lastProbeFailed": self.last_probe_failed,
-                "refreshing": self.refreshing,
-            }
+            payload = self._build_devices_payload_locked()
         self._emit("devices", payload)
 
     def _emit_packages_state(self) -> None:
         with self._state_lock:
-            payload = {
-                "folder": self.folder,
-                "recentDirs": list(self.config_manager.data.get("recent_dirs", [])),
-                "scanning": self.scanning,
-                "packages": self._serialize_packages(),
-            }
+            payload = self._build_packages_payload_locked()
         self._emit("packages", payload)
 
     def _emit_task_state(self) -> None:
         with self._state_lock:
-            payload = {
-                "task": self._serialize_task(),
-                "installStatus": self.install_status,
-                "deviceProgress": dict(self.device_progress),
-            }
+            payload = self._build_task_payload_locked()
         self._emit("task", payload)
 
     # ---- Public RPC API (called from JS via pywebview.api) -----------------------
@@ -300,6 +335,7 @@ class InstallerBridge:
                 },
                 "tools": diagnose_tools(),
                 "appLogTargets": self._serialize_app_log_targets(),
+                "revisions": dict(self._event_revs),
             }
 
     def refresh_devices(self, include_packages: bool = False) -> Dict[str, Any]:
@@ -319,13 +355,11 @@ class InstallerBridge:
         return {"ok": True}
 
     def _apply_device_refresh_result(self, request_id: int, detection: DeviceDetectionResult) -> None:
-        with self._state_lock:
-            if request_id != self._latest_refresh_request_id:
-                return
         self._apply_device_refresh(
             detection.devices,
             harmony_error=detection.harmony_error,
             android_error=detection.android_error,
+            expected_refresh_request_id=request_id,
         )
 
     def _apply_device_refresh_error(self, request_id: int, error: Exception) -> None:
@@ -335,8 +369,9 @@ class InstallerBridge:
             self._last_device_refresh_snapshot = None
             self.last_probe_failed = True
             self.refreshing = False
+            payload = self._build_devices_payload_locked()
         self._append_log(f"刷新设备列表失败：{error}", "error")
-        self._emit_devices_state()
+        self._emit("devices", payload)
 
     def _apply_device_refresh(
         self,
@@ -345,6 +380,7 @@ class InstallerBridge:
         summary_label: str = "设备列表已刷新",
         harmony_error: Optional[str] = None,
         android_error: Optional[str] = None,
+        expected_refresh_request_id: Optional[int] = None,
     ) -> None:
         probe_errors = {
             platform: error
@@ -356,6 +392,11 @@ class InstallerBridge:
             tuple(sorted(probe_errors.items())),
         )
         with self._state_lock:
+            if (
+                expected_refresh_request_id is not None
+                and expected_refresh_request_id != self._latest_refresh_request_id
+            ):
+                return
             log_result = (
                 bool(probe_errors)
                 or snapshot != self._last_device_refresh_snapshot
@@ -382,15 +423,16 @@ class InstallerBridge:
             preserved = [d.device_id for d in self.devices if d.device_id in requested_selection]
             if preserved:
                 self.selected_device_ids = preserved
-            elif len(self.devices) == 1 and not probe_errors:
+            elif not requested_selection and len(self.devices) == 1 and not probe_errors:
                 self.selected_device_ids = [self.devices[0].device_id]
             else:
                 self.selected_device_ids = []
             self.refreshing = False
             counts = {key: sum(d.platform == key for d in self.devices) for key in DRIVERS}
             total = len(self.devices)
+            payload = self._build_devices_payload_locked()
 
-        self._emit_devices_state()
+        self._emit("devices", payload)
 
         if probe_errors:
             if summary_label != "设备列表已刷新":
@@ -440,7 +482,7 @@ class InstallerBridge:
             import webview
 
             start_dir = self.folder if self.folder and Path(self.folder).is_dir() else ""
-            result = win.create_file_dialog(webview.FileDialog.FOLDER, directory=start_dir)
+            result = win.create_file_dialog(_folder_dialog_type(webview), directory=start_dir)
         except Exception as error:
             self._append_log(f"打开目录选择器失败：{error}", "error")
             return {"ok": False, "error": str(error)}
@@ -472,13 +514,11 @@ class InstallerBridge:
             return {"ok": False, "error": "目录不存在或不是目录"}
 
         with self._state_lock:
-            self.folder = str(directory)
             self._latest_scan_request_id += 1
             request_id = self._latest_scan_request_id
             self.scanning = True
-        if remember:
-            self.config_manager.set_last_scan_dir(str(directory))
-        self._emit_packages_state()
+            payload = self._build_packages_payload_locked()
+        self._emit("packages", payload)
 
         preferred_path = Path(preferred_file) if preferred_file else None
 
@@ -493,7 +533,7 @@ class InstallerBridge:
 
         self.tasks.background(
             _do_scan,
-            lambda res: self._apply_scan_result(request_id, *res),
+            lambda res: self._apply_scan_result(request_id, *res, remember=remember),
             lambda err: self._apply_scan_error(request_id, directory, err),
         )
         return {"ok": True}
@@ -502,11 +542,11 @@ class InstallerBridge:
         with self._state_lock:
             if request_id != self._latest_scan_request_id:
                 return
-            self._last_package_scan_snapshot = None
             self.scanning = False
+            payload = self._build_packages_payload_locked()
         self._append_log(f"扫描安装包失败：{directory}，{error}", "error")
         self._toast("扫描安装包失败", str(error), variant="error")
-        self._emit_packages_state()
+        self._emit("packages", payload)
 
     def _apply_scan_result(
         self,
@@ -515,11 +555,14 @@ class InstallerBridge:
         found,
         snapshot,
         preferred_path: Optional[Path],
+        *,
+        remember: bool = True,
     ) -> None:
         with self._state_lock:
             if request_id != self._latest_scan_request_id:
                 return
             previous_selection = self._selected_packages()
+            self.folder = str(directory)
             for kind, slot in self.packages.items():
                 pref = (
                     preferred_path
@@ -539,8 +582,19 @@ class InstallerBridge:
                 self._on_package_labels,
                 priority_paths=priority,
             )
+            payload = self._build_packages_payload_locked()
 
-        self._emit_packages_state()
+        if remember:
+            try:
+                self.config_manager.set_last_scan_dir(str(directory))
+                with self._state_lock:
+                    if request_id == self._latest_scan_request_id:
+                        payload = self._build_packages_payload_locked()
+            except OSError as error:
+                self._append_log(f"保存最近扫描目录失败：{error}", "warn")
+                self._toast("保存目录历史失败", str(error), variant="warn")
+
+        self._emit("packages", payload)
         if changed:
             names = "，".join(f"{kind}={path.name if path else '未找到'}" for kind, path in selection.items())
             self._append_log(f"安装包扫描完成：{directory} · {names}", "info")
@@ -584,13 +638,24 @@ class InstallerBridge:
         self._toast("路径不存在", str(first), variant="error")
         return {"ok": False, "error": "路径不存在"}
 
-    def select_package(self, kind: str, index: int) -> Dict[str, Any]:
+    def select_package(self, kind: str, index: int, revision: Optional[int] = None) -> Dict[str, Any]:
         with self._state_lock:
             slot = self.packages.get(kind)
-            if slot is None or not slot.choose(index):
-                return {"ok": False, "error": "无效的安装包索引"}
-            selected = slot.selected
-        self._emit_packages_state()
+            if slot is None:
+                return {"ok": False, "error": "无效的安装包类型"}
+            if revision is not None and slot.revision != revision:
+                payload = self._build_packages_payload_locked()
+                stale = True
+            else:
+                stale = False
+                if not slot.choose(index):
+                    return {"ok": False, "error": "无效的安装包索引"}
+                selected = slot.selected
+                payload = self._build_packages_payload_locked()
+        if stale:
+            self._emit("packages", payload)
+            return {"ok": False, "error": "候选列表已更新，请重新选择", "stale": True}
+        self._emit("packages", payload)
         if selected:
             self._append_log(f"已切换 {kind} 安装包：{selected.name}", "info")
         return {"ok": True}
@@ -635,6 +700,10 @@ class InstallerBridge:
             return {"ok": True, "action": "cancelled"}
 
         with self._state_lock:
+            if self.scanning:
+                self._toast("安装包扫描中", "请等待目录扫描完成后再开始安装", variant="warn")
+                self._append_log("安装已拦截：正在扫描安装包目录", "warn")
+                return {"ok": False, "error": "安装包扫描中，请稍候"}
             packages = self._selected_packages()
             if not any(packages.values()):
                 self._toast("未找到安装包", "请先选择包含 APK 或 HAP 的目录", variant="warn")
@@ -703,6 +772,7 @@ class InstallerBridge:
             self._end_task(task, "安装已中止", ok=False, status="已中止")
             return
 
+        preflight_devices = list(detection.devices)
         failed_platforms = set(detection.errors)
         if failed_platforms:
             with self._state_lock:
@@ -713,27 +783,28 @@ class InstallerBridge:
                 return
 
         self._apply_device_refresh(
-            detection.devices,
+            preflight_devices,
             previous_selection,
             summary_label=f"安装前设备校验完成（耗时 {validation_duration:.2f} 秒）",
             harmony_error=detection.harmony_error,
             android_error=detection.android_error,
         )
 
-        with self._state_lock:
-            current_ids = {d.device_id for d in self.devices}
-            missing = previous_selection - current_ids
-            selection_list = [d.device_id for d in self.devices if d.device_id in previous_selection]
-            if not selection_list:
-                if len(self.devices) == 1 and not failed_platforms:
-                    selection_list = [self.devices[0].device_id]
+        current_ids = {d.device_id for d in preflight_devices}
+        missing = previous_selection - current_ids
+        selection_list = [d.device_id for d in preflight_devices if d.device_id in previous_selection]
+        auto_picked: Optional[str] = None
+        if not selection_list and not previous_selection and len(preflight_devices) == 1 and not failed_platforms:
+            selection_list = [preflight_devices[0].device_id]
+            auto_picked = self._device_label(selection_list[0])
+            with self._state_lock:
+                if {d.device_id for d in self.devices} == current_ids:
                     self.selected_device_ids = list(selection_list)
-                    auto_picked = self._device_label(selection_list[0])
+                    auto_payload = self._build_devices_payload_locked()
                 else:
-                    auto_picked = None
-            else:
-                auto_picked = None
-            devices_snapshot = list(self.devices)
+                    auto_payload = None
+        else:
+            auto_payload = None
 
         if missing:
             missing_text = self._device_labels_for_log(sorted(missing))
@@ -741,15 +812,20 @@ class InstallerBridge:
             self._append_log(f"安装提示：已选设备已断开 {missing_text}", "warn")
 
         if auto_picked:
-            self._emit_devices_state()
+            if auto_payload is not None:
+                self._emit("devices", auto_payload)
             self._append_log(f"检测到单设备，默认安装到：{auto_picked}", "info")
 
         if not selection_list:
-            self._toast("请先选择设备", "未选择任何可用的目标设备", variant="warn")
-            self._end_task(task, "安装失败：未选择设备", ok=False, status="就绪")
+            if previous_selection:
+                self._toast("已选设备均已断开", "请重新连接设备后再试", variant="warn")
+                self._end_task(task, "安装失败：已选设备均已断开", ok=False, status="就绪")
+            else:
+                self._toast("请先选择设备", "未选择任何可用的目标设备", variant="warn")
+                self._end_task(task, "安装失败：未选择设备", ok=False, status="就绪")
             return
 
-        plan = build_install_plan(selection_list, devices_snapshot, packages, self._device_label)
+        plan = build_install_plan(selection_list, preflight_devices, packages, self._device_label)
 
         def _on_device_progress(device_id: str, state: str, detail: str, duration: Optional[float]) -> None:
             with self._state_lock:
@@ -995,7 +1071,7 @@ class InstallerBridge:
 
     def cancel_task(self) -> Dict[str, Any]:
         task = self.tasks.current
-        if task and self.tasks.cancel():
+        if task and self.tasks.cancel(expected=task):
             self._append_log(f"已请求中止{task.label}…", "warn")
             return {"ok": True}
         return {"ok": False}
@@ -1064,7 +1140,7 @@ class InstallerBridge:
             import webview
 
             current = str(self.config_manager.resolved_log_output_dir())
-            result = win.create_file_dialog(webview.FileDialog.FOLDER, directory=current if Path(current).is_dir() else "")
+            result = win.create_file_dialog(_folder_dialog_type(webview), directory=current if Path(current).is_dir() else "")
         except Exception as error:
             return {"ok": False, "error": str(error)}
         if not result:
@@ -1086,13 +1162,15 @@ class InstallerBridge:
             except (TypeError, ValueError):
                 pass
         cfg = self.config_manager.update_settings(mapped)
-        settings_payload = {
-            "theme": cfg.get("theme", "system"),
-            "logOutputDir": cfg.get("log_output_dir", ""),
-            "defaultLogOutputDir": str(default_log_output_dir()),
-            "parallelInstall": bool(cfg.get("parallel_install", True)),
-            "maxConcurrency": int(cfg.get("max_concurrency", 4)),
-        }
+        with self._state_lock:
+            settings_payload = {
+                "rev": self._next_rev_locked("settings"),
+                "theme": cfg.get("theme", "system"),
+                "logOutputDir": cfg.get("log_output_dir", ""),
+                "defaultLogOutputDir": str(default_log_output_dir()),
+                "parallelInstall": bool(cfg.get("parallel_install", True)),
+                "maxConcurrency": int(cfg.get("max_concurrency", 4)),
+            }
         self._emit("settings", settings_payload)
         return {"ok": True, "settings": settings_payload}
 

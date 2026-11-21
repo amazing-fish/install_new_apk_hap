@@ -16,6 +16,7 @@ from functools import cached_property
 import codecs
 import locale
 import os
+import queue
 import subprocess
 import tempfile
 import threading
@@ -201,25 +202,38 @@ def _run_streaming(
     total_lock = threading.Lock()
     total_bytes = 0
     exceeded_event = threading.Event()
+    line_queue: "queue.SimpleQueue[Optional[tuple[str, str]]]" = queue.SimpleQueue()
+    stop_callbacks = threading.Event()
 
-    def _emit_lines(stream_name: str, text_chunk: str, pending: List[str]) -> None:
+    def _dispatch_callbacks() -> None:
+        while not stop_callbacks.is_set():
+            item = line_queue.get()
+            if item is None or stop_callbacks.is_set():
+                return
+            stream_name, line = item
+            try:
+                on_output(stream_name, line)
+            except Exception:
+                pass
+
+    dispatcher = threading.Thread(target=_dispatch_callbacks, daemon=True, name="process-output-cb")
+    dispatcher.start()
+
+    def _enqueue_lines(stream_name: str, text_chunk: str, pending: List[str]) -> None:
         if not text_chunk:
             return
         normalized = text_chunk.replace("\r\n", "\n").replace("\r", "\n")
         pending.append(normalized)
-        joined = "".join(pending)
-        if "\n" not in joined:
+        if "\n" not in normalized:
             return
+        joined = "".join(pending)
         lines = joined.split("\n")
         pending.clear()
         if lines[-1]:
             pending.append(lines[-1])
         for line in lines[:-1]:
             if line.strip():
-                try:
-                    on_output(stream_name, line)
-                except Exception:
-                    pass
+                line_queue.put((stream_name, line))
 
     def _reader(stream, stream_name: str, target_buf: bytearray) -> None:
         nonlocal total_bytes
@@ -240,7 +254,7 @@ def _run_streaming(
                         exceeded_event.set()
                         break
                 decoded = decoder.decode(chunk, final=False)
-                _emit_lines(stream_name, decoded, pending)
+                _enqueue_lines(stream_name, decoded, pending)
             tail = decoder.decode(b"", final=True)
             if tail:
                 pending.append(tail.replace("\r\n", "\n").replace("\r", "\n"))
@@ -248,10 +262,7 @@ def _run_streaming(
             if rem:
                 for line in rem.splitlines():
                     if line.strip():
-                        try:
-                            on_output(stream_name, line)
-                        except Exception:
-                            pass
+                        line_queue.put((stream_name, line))
         except OSError:
             pass
         finally:
@@ -272,6 +283,7 @@ def _run_streaming(
 
     deadline = None if timeout is None else time.monotonic() + timeout
     timed_out = cancelled = exceeded = False
+    capture_incomplete = False
     try:
         while True:
             try:
@@ -294,13 +306,32 @@ def _run_streaming(
     finally:
         if proc.poll() is None:
             _stop(proc, graceful=False)
+        interrupted_flag = timed_out or cancelled or exceeded
+        join_timeout = 2.0 if interrupted_flag else 5.0
         for thread in threads:
-            thread.join(timeout=2.0)
+            thread.join(timeout=join_timeout)
+        if any(thread.is_alive() for thread in threads):
+            capture_incomplete = True
+            for s in (proc.stdout, proc.stderr):
+                if s is not None:
+                    try:
+                        s.close()
+                    except OSError:
+                        pass
+            for thread in threads:
+                thread.join(timeout=1.0)
+        if interrupted_flag or capture_incomplete:
+            stop_callbacks.set()
+            line_queue.put(None)
+            dispatcher.join(timeout=2.0)
+        else:
+            line_queue.put(None)
+            dispatcher.join()
 
     if exceeded_event.is_set():
         exceeded = True
     returncode = proc.returncode if proc.returncode is not None else -1
-    if (timed_out or cancelled or exceeded) and returncode == 0:
+    if (timed_out or cancelled or exceeded or capture_incomplete) and returncode == 0:
         returncode = -1
     return ProcessResult(
         command=command,

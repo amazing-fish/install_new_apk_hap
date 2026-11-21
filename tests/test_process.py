@@ -72,3 +72,33 @@ def test_buffered_run_timeout_and_output_limit():
 def test_missing_executable_raises_launch_error():
     with pytest.raises(process.ToolLaunchError):
         process.run(["__nonexistent_binary_for_test_12345__"])
+
+
+def test_streaming_slow_callback_does_not_truncate_output_or_leak_after_return():
+    seen: list[str] = []
+    callback_done = threading.Event()
+
+    def slow_on_output(_stream: str, line: str) -> None:
+        time.sleep(0.25)
+        seen.append(line)
+        if "Failure [INSTALL_FAILED]" in line:
+            callback_done.set()
+
+    code = "print('Performing Streamed Install', flush=True); print('Failure [INSTALL_FAILED]', flush=True)"
+    res = process.run([sys.executable, "-c", code], on_output=slow_on_output)
+    count_at_return = len(seen)
+    time.sleep(0.35)
+    assert res.returncode == 0
+    assert "Failure [INSTALL_FAILED]" in res.stdout
+    assert callback_done.is_set()
+    assert len(seen) == count_at_return
+    assert seen == ["Performing Streamed Install", "Failure [INSTALL_FAILED]"]
+
+
+def test_streaming_long_unterminated_line():
+    seen: list[str] = []
+    code = "import sys; sys.stdout.write('X' * 10000); sys.stdout.flush()"
+    res = process.run([sys.executable, "-c", code], on_output=lambda _s, ln: seen.append(ln))
+    assert res.returncode == 0
+    assert seen == ["X" * 10000]
+    assert res.stdout == "X" * 10000

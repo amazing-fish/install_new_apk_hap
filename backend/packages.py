@@ -70,6 +70,7 @@ class PackageSlot:
     candidates: List[PackageCandidate] = field(default_factory=list)
     labels: Dict[Path, PackageLabel] = field(default_factory=dict)
     index: int = 0
+    revision: int = 0
 
     @property
     def candidate_paths(self) -> List[Path]:
@@ -98,6 +99,7 @@ class PackageSlot:
         ]
         self.labels = {}
         self.index = 0
+        self.revision += 1
         if preferred_path is not None:
             self.select_path(preferred_path)
 
@@ -164,6 +166,7 @@ class PackageSlot:
             )
         return {
             "kind": kind,
+            "revision": self.revision,
             "selectedIndex": self.index if self.candidates else -1,
             "allowTest": apk_allow_test(self) if kind == "APK" else None,
             "candidates": items,
@@ -172,7 +175,17 @@ class PackageSlot:
 
 def apk_allow_test(slot: PackageSlot) -> bool:
     """Default to `-t` unless parsed metadata explicitly reports `test_only is False`."""
-    if slot.selected is None:
+    cand = slot.selected_candidate
+    if cand is None:
         return False
     label = slot.selected_label
-    return not (label is not None and label.test_only is False)
+    if label is not None and label.test_only is False:
+        if cand.mtime_ns > 0:
+            try:
+                st = cand.path.stat()
+            except OSError:
+                return True
+            if (st.st_size, st.st_mtime_ns) != (cand.size_bytes, cand.mtime_ns):
+                return True
+        return False
+    return True
