@@ -58,6 +58,7 @@ export default function App() {
   const [appLogTargets, setAppLogTargets] = useState<AppLogTargetItem[]>([]);
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [windowMaximized, setWindowMaximized] = useState(false);
   const [draggingOver, setDraggingOver] = useState(false);
   const dragDepthRef = useRef(0);
   const revisionsRef = useRef<Record<string, number>>({
@@ -67,6 +68,8 @@ export default function App() {
     settings: 0,
   });
   const logClearGenRef = useRef<number>(0);
+  const toolsEventSeenRef = useRef(false);
+  const windowStateEventSeenRef = useRef(false);
 
   const pushToast = useCallback((toast: ToastItem) => {
     setToasts((prev) => [...prev.slice(-3), toast]);
@@ -118,6 +121,8 @@ export default function App() {
   useEffect(() => {
     revisionsRef.current = { devices: 0, packages: 0, task: 0, settings: 0 };
     logClearGenRef.current = 0;
+    toolsEventSeenRef.current = false;
+    windowStateEventSeenRef.current = false;
 
     window.__INSTALLER_EVENT__ = (event: InstallerEvent) => {
       const { type, payload } = event;
@@ -180,6 +185,14 @@ export default function App() {
       } else if (type === 'settings') {
         if (!acceptEventRevision('settings', payload?.rev)) return;
         setSettings(payload as AppSettings);
+      } else if (type === 'tools') {
+        if (payload && typeof payload === 'object') {
+          toolsEventSeenRef.current = true;
+          setTools(payload as Record<string, ToolDiagnostic>);
+        }
+      } else if (type === 'window_state') {
+        windowStateEventSeenRef.current = true;
+        setWindowMaximized(Boolean(payload?.maximized));
       } else if (type === 'toast') {
         const t = payload as ToastItem;
         if (t.copyText) {
@@ -244,8 +257,13 @@ export default function App() {
         if (acceptSnapshotRevision('settings', init.revisions?.settings)) {
           setSettings(init.settings);
         }
-        setTools(init.tools);
+        if (!toolsEventSeenRef.current && init.tools && Object.keys(init.tools).length > 0) {
+          setTools(init.tools);
+        }
         setAppLogTargets(init.appLogTargets);
+        if (!windowStateEventSeenRef.current) {
+          setWindowMaximized(Boolean(init.windowMaximized));
+        }
         setInitError(null);
         setReady(true);
       } catch (err) {
@@ -392,12 +410,18 @@ export default function App() {
         version={version}
         theme={settings.theme}
         tools={tools}
+        maximized={windowMaximized}
         onThemeChange={(theme) => handleUpdateSettings({ theme })}
         onOpenSettings={() => setSettingsOpen(true)}
+        onStartDrag={() => bridgeApi.windowStartDrag()}
+        onStartResize={(edge) => bridgeApi.windowStartResize(edge)}
+        onMinimize={() => bridgeApi.windowMinimize()}
+        onToggleMaximize={() => bridgeApi.windowToggleMaximize()}
+        onClose={() => bridgeApi.windowClose()}
       />
 
       {/* Main Workspace */}
-      <main className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3.5">
+      <main className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto p-3">
         <DevicePanel
           devices={devices}
           selectedDeviceIds={selectedDeviceIds}
@@ -437,6 +461,10 @@ export default function App() {
           onCopyLogs={(text) => {
             if (text) copyToClipboard(text, '日志');
           }}
+          onCopyLine={(text) => {
+            if (text) copyToClipboard(text, '日志行');
+          }}
+          onOpenPath={(path) => bridgeApi.openPathInExplorer(path)}
         />
       </main>
 

@@ -84,3 +84,93 @@ def test_read_stage_hap_and_persistent_cache_loader(tmp_path: Path):
         assert set(batches2[0][0].keys()) == {hap1, hap2}
     finally:
         loader2.close()
+
+
+def test_metadata_cache_hits_across_different_onefile_tool_paths_with_same_manifest(monkeypatch, tmp_path):
+    import hashlib
+    from metadata import loader as loader_mod
+
+    hap = _make_stage_hap(tmp_path / "cached.hap", name="跨重启命中应用", version="1.0.0", code=100)
+    cache_file = tmp_path / "meta_cache.json"
+
+    def make_tool_dir(name: str):
+        d = tmp_path / name / "package_tools"
+        d.mkdir(parents=True)
+        aapt_bytes = b"aapt2-v1"
+        restool_bytes = b"restool-v1"
+        (d / "aapt2.exe").write_bytes(aapt_bytes)
+        (d / "restool.exe").write_bytes(restool_bytes)
+        (d / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "platform": "windows-x64",
+                    "files": {
+                        "aapt2.exe": hashlib.sha256(aapt_bytes).hexdigest(),
+                        "restool.exe": hashlib.sha256(restool_bytes).hexdigest(),
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        return MetadataTools(str(d / "aapt2.exe"), str(d / "restool.exe"))
+
+    tools_run1 = make_tool_dir("mei_11111")
+    tools_run2 = make_tool_dir("mei_22222")
+
+    monkeypatch.setattr(loader_mod, "resolve_metadata_tools", lambda: tools_run1)
+    done1 = threading.Event()
+    loader1 = PackageLabelLoader(post=lambda fn: fn(), cache_path=cache_file, max_workers=1)
+    try:
+        loader1.submit([hap], lambda _g, _l, _f, done: done and done1.set(), priority_paths=[hap])
+        assert done1.wait(timeout=5.0)
+    finally:
+        loader1.close()
+
+    # Second run uses a totally different _MEIPASS path and must still hit disk cache without calling read_package_label.
+    monkeypatch.setattr(loader_mod, "resolve_metadata_tools", lambda: tools_run2)
+    monkeypatch.setattr(
+        loader_mod,
+        "read_package_label",
+        lambda *_args, **_kw: (_ for _ in ()).throw(AssertionError("cache miss forced re-parse")),
+    )
+    done2 = threading.Event()
+    batches2: list[tuple[dict, bool]] = []
+    loader2 = PackageLabelLoader(post=lambda fn: fn(), cache_path=cache_file, max_workers=1)
+    try:
+        def on_update(_gen, labels, _fps, done):
+            batches2.append((dict(labels), done))
+            if done:
+                done2.set()
+
+        loader2.submit([hap], on_update, priority_paths=[hap])
+        assert done2.wait(timeout=5.0)
+        assert len(batches2) == 1
+        assert batches2[0][1] is True
+        assert batches2[0][0][hap].name == "跨重启命中应用"
+    finally:
+        loader2.close()
+
+
+def test_tool_fingerprint_handles_non_dict_manifest_and_same_size_replacement(monkeypatch, tmp_path):
+    import os
+    from metadata.loader import tool_fingerprint
+
+    tool = tmp_path / "aapt2.exe"
+    tool.write_bytes(b"aaaa")
+    (tmp_path / "manifest.json").write_text("[1, 2, 3]", encoding="utf-8")
+
+    fp1 = tool_fingerprint(str(tool))
+    assert fp1[0] == "file-sha256"
+
+    # Replace with same size & identical mtime; st_ino / st_ctime or content check should not crash.
+    st_before = tool.stat()
+    tool2 = tmp_path / "aapt2_new.exe"
+    tool2.write_bytes(b"bbbb")
+    os.utime(tool2, ns=(st_before.st_atime_ns, st_before.st_mtime_ns))
+    os.replace(tool2, tool)
+    os.utime(tool, ns=(st_before.st_atime_ns, st_before.st_mtime_ns))
+
+    fp2 = tool_fingerprint(str(tool))
+    assert fp2[0] == "file-sha256"
+    assert fp2 != fp1
