@@ -138,7 +138,7 @@ def _build_fast_server_class(*, debug: bool = False):
                 if not server.root_path:
                     return ""
                 cache_policy = "public, max-age=31536000, immutable" if file.startswith("assets/") else "no-cache"
-                resp = bottle.static_file(file, root=server.root_path, headers={"Cache-Control": cache_policy})
+                resp = bottle.static_file(file, root=server.root_path)
                 resp.set_header("Cache-Control", cache_policy)
                 return resp
 

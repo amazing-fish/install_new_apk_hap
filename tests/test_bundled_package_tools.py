@@ -122,7 +122,16 @@ def test_onefile_zip_lazily_extracts_to_persistent_cache_and_reuses_fast_path(mo
 
 
 def test_persistent_tools_cache_root_uses_localappdata_on_windows(monkeypatch, tmp_path):
-    monkeypatch.setattr(tools.os, 'name', 'nt')
+    import types
+
+    real_os = tools.os
+    os_proxy = types.SimpleNamespace(
+        name='nt',
+        environ=real_os.environ,
+        access=real_os.access,
+        W_OK=real_os.W_OK,
+    )
+    monkeypatch.setattr(tools, 'os', os_proxy)
     local_dir = tmp_path / 'localappdata'
     monkeypatch.setenv('LOCALAPPDATA', str(local_dir))
     monkeypatch.delenv('APPDATA', raising=False)

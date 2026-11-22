@@ -69,6 +69,7 @@ export default function App() {
   });
   const logClearGenRef = useRef<number>(0);
   const toolsEventSeenRef = useRef(false);
+  const windowStateEventSeenRef = useRef(false);
 
   const pushToast = useCallback((toast: ToastItem) => {
     setToasts((prev) => [...prev.slice(-3), toast]);
@@ -121,6 +122,7 @@ export default function App() {
     revisionsRef.current = { devices: 0, packages: 0, task: 0, settings: 0 };
     logClearGenRef.current = 0;
     toolsEventSeenRef.current = false;
+    windowStateEventSeenRef.current = false;
 
     window.__INSTALLER_EVENT__ = (event: InstallerEvent) => {
       const { type, payload } = event;
@@ -189,6 +191,7 @@ export default function App() {
           setTools(payload as Record<string, ToolDiagnostic>);
         }
       } else if (type === 'window_state') {
+        windowStateEventSeenRef.current = true;
         setWindowMaximized(Boolean(payload?.maximized));
       } else if (type === 'toast') {
         const t = payload as ToastItem;
@@ -258,7 +261,9 @@ export default function App() {
           setTools(init.tools);
         }
         setAppLogTargets(init.appLogTargets);
-        setWindowMaximized(Boolean(init.windowMaximized));
+        if (!windowStateEventSeenRef.current) {
+          setWindowMaximized(Boolean(init.windowMaximized));
+        }
         setInitError(null);
         setReady(true);
       } catch (err) {
