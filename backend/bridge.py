@@ -78,8 +78,6 @@ class InstallerBridge:
         self._state_lock = threading.RLock()
         self._emit_fn = emit
         self._window = None  # Attached by main.py once PyWebView window is created
-        self._window_controller = None
-        self._window_maximized = False
         self._version = _read_version()
 
         cfg_path = config_path or default_config_path()
@@ -109,15 +107,11 @@ class InstallerBridge:
         self._last_device_refresh_snapshot = None
         self._last_package_scan_snapshot = None
         self._package_label_request = 0
-        self._tools_cache: Optional[Dict[str, Any]] = None
-        self._tools_ready = threading.Event()
-        self._auto_start = auto_start
 
         self.tasks = TaskRunner(post=self._run_inline, on_change=self._on_task_change)
         self._package_label_loader = PackageLabelLoader(post=self._run_inline, cache_path=cache_path)
 
         if auto_start:
-            threading.Thread(target=self._warmup_tools, daemon=True, name="tools-warmup").start()
             self.refresh_devices()
             last_dir = str(self.config_manager.data.get("last_scan_dir", "")).strip()
             if last_dir:
@@ -128,31 +122,6 @@ class InstallerBridge:
 
     def attach_window(self, window) -> None:
         self._window = window
-
-    def attach_window_controller(self, controller) -> None:
-        self._window_controller = controller
-        if controller is not None:
-            try:
-                self._window_maximized = bool(controller.is_maximized())
-            except Exception:
-                pass
-
-    def notify_window_state(self, maximized: bool) -> None:
-        with self._state_lock:
-            self._window_maximized = bool(maximized)
-        self._emit("window_state", {"maximized": bool(maximized)})
-
-    def _warmup_tools(self) -> None:
-        try:
-            report = diagnose_tools()
-        except Exception:
-            return
-        with self._state_lock:
-            if self._closed:
-                return
-            self._tools_cache = report
-            self._tools_ready.set()
-        self._emit("tools", report)
 
     def _run_inline(self, callback: Callable[[], None]) -> None:
         callback()
@@ -191,13 +160,10 @@ class InstallerBridge:
         message: str,
         level: str = "info",
         device_id: Optional[str] = None,
-        *,
-        action_path: Optional[str] = None,
-        action_label: Optional[str] = None,
     ) -> Dict[str, Any]:
         with self._state_lock:
             self._log_seq += 1
-            entry: Dict[str, Any] = {
+            entry = {
                 "id": self._log_seq,
                 "clearGen": self._log_clear_gen,
                 "timestamp": datetime.now().strftime("%H:%M:%S"),
@@ -205,9 +171,6 @@ class InstallerBridge:
                 "message": message,
                 "deviceId": device_id,
             }
-            if action_path:
-                entry["actionPath"] = action_path
-                entry["actionLabel"] = action_label or "打开位置"
             self._logs.append(entry)
             if len(self._logs) > MAX_LOG_ENTRIES:
                 self._logs = self._logs[-MAX_LOG_ENTRIES:]
@@ -349,19 +312,6 @@ class InstallerBridge:
 
     def get_initial_state(self) -> Dict[str, Any]:
         with self._state_lock:
-            tools_snapshot = dict(self._tools_cache) if self._tools_cache is not None else None
-        if tools_snapshot is None:
-            if self._auto_start:
-                self._tools_ready.wait(timeout=0.05)
-                with self._state_lock:
-                    tools_snapshot = dict(self._tools_cache) if self._tools_cache is not None else {}
-            else:
-                tools_snapshot = diagnose_tools()
-                with self._state_lock:
-                    self._tools_cache = dict(tools_snapshot)
-                    self._tools_ready.set()
-
-        with self._state_lock:
             cfg = self.config_manager.data
             return {
                 "version": self._version,
@@ -386,9 +336,8 @@ class InstallerBridge:
                     "parallelInstall": bool(cfg.get("parallel_install", True)),
                     "maxConcurrency": int(cfg.get("max_concurrency", 4)),
                 },
-                "tools": tools_snapshot,
+                "tools": diagnose_tools(),
                 "appLogTargets": self._serialize_app_log_targets(),
-                "windowMaximized": self._window_maximized,
                 "revisions": dict(self._event_revs),
             }
 
@@ -1066,8 +1015,6 @@ class InstallerBridge:
                 task,
                 f"获取崩溃日志成功：设备 {label}，共 {result.file_count} 个文件，ZIP: {result.zip_path}",
                 ok=True,
-                action_path=str(result.zip_path),
-                action_label="打开位置",
             )
             self._toast(
                 "崩溃日志已打包",
@@ -1078,13 +1025,7 @@ class InstallerBridge:
             )
             return
         if result.appended_to:
-            self._end_task(
-                task,
-                f"获取崩溃日志成功：设备 {label}，已追加到 {result.appended_to}",
-                ok=True,
-                action_path=str(result.appended_to),
-                action_label="打开位置",
-            )
+            self._end_task(task, f"获取崩溃日志成功：设备 {label}，已追加到 {result.appended_to}", ok=True)
             self._toast(
                 "崩溃日志已写入",
                 str(result.appended_to),
@@ -1135,8 +1076,6 @@ class InstallerBridge:
             task,
             f"获取{target.display_name}成功：设备 {label}，共 {result.file_count} 个文件，ZIP: {result.zip_path}",
             ok=True,
-            action_path=str(result.zip_path),
-            action_label="打开位置",
         )
         self._toast(
             f"{target.display_name}已打包",
@@ -1162,14 +1101,12 @@ class InstallerBridge:
         *,
         ok: bool = True,
         status: Optional[str] = None,
-        action_path: Optional[str] = None,
-        action_label: Optional[str] = None,
     ) -> None:
         final_status = status if status is not None else f"{task.label}{'完成' if ok else '失败'}"
         with self._state_lock:
             self.install_status = final_status
         level = "success" if ok else ("warn" if final_status in ("已中止", "安装未完成", "就绪") else "error")
-        self._append_log(message, level, action_path=action_path, action_label=action_label)
+        self._append_log(message, level)
         self._emit_task_state()
 
     def _on_task_change(self) -> None:
@@ -1255,127 +1192,8 @@ class InstallerBridge:
                 "maxConcurrency": int(cfg.get("max_concurrency", 4)),
             }
         self._emit("settings", settings_payload)
-        if "theme" in mapped and self._window_controller is not None:
-            try:
-                self._window_controller.apply_theme_mode(settings_payload["theme"])
-            except Exception:
-                pass
         return {"ok": True, "settings": settings_payload}
 
     def diagnose_environment(self) -> Dict[str, Any]:
         report = diagnose_tools()
-        with self._state_lock:
-            self._tools_cache = dict(report)
-            self._tools_ready.set()
-        self._emit("tools", report)
         return {"ok": True, "tools": report}
-
-    # ---- Native borderless window controls ---------------------------------------
-
-    def window_start_drag(self) -> Dict[str, Any]:
-        ctrl = self._window_controller
-        if ctrl is None:
-            return {"ok": False}
-        return {"ok": bool(ctrl.start_drag())}
-
-    def window_start_resize(self, edge: str) -> Dict[str, Any]:
-        ctrl = self._window_controller
-        if ctrl is None:
-            return {"ok": False}
-        return {"ok": bool(ctrl.start_resize(edge))}
-
-    def window_minimize(self) -> Dict[str, Any]:
-        ctrl = self._window_controller
-        if ctrl is None:
-            return {"ok": False}
-        return {"ok": bool(ctrl.minimize())}
-
-    def window_toggle_maximize(self) -> Dict[str, Any]:
-        ctrl = self._window_controller
-        if ctrl is None:
-            return {"ok": False}
-        maximized = ctrl.toggle_maximize()
-        self.notify_window_state(bool(maximized))
-        return {"ok": True, "maximized": bool(maximized)}
-
-    def window_close(self) -> Dict[str, Any]:
-        ctrl = self._window_controller
-        if ctrl is None:
-            return {"ok": False}
-        return {"ok": bool(ctrl.close())}
-
-
-class JsApiFacade:
-    """Explicit minimal JS-facing RPC facade to avoid leaking internal Python attributes."""
-
-    def __init__(self, bridge: InstallerBridge) -> None:
-        self._bridge = bridge
-
-    def get_initial_state(self) -> Dict[str, Any]:
-        return self._bridge.get_initial_state()
-
-    def refresh_devices(self, include_packages: bool = False) -> Dict[str, Any]:
-        return self._bridge.refresh_devices(include_packages)
-
-    def set_selected_devices(self, device_ids: List[str]) -> Dict[str, Any]:
-        return self._bridge.set_selected_devices(device_ids)
-
-    def save_device_name(self, device_id: str, name: str) -> Dict[str, Any]:
-        return self._bridge.save_device_name(device_id, name)
-
-    def choose_folder(self) -> Dict[str, Any]:
-        return self._bridge.choose_folder()
-
-    def scan_folder(self, folder_path: str) -> Dict[str, Any]:
-        return self._bridge.scan_folder(folder_path)
-
-    def handle_dropped_paths(self, raw_paths: List[str]) -> Dict[str, Any]:
-        return self._bridge.handle_dropped_paths(raw_paths)
-
-    def select_package(self, kind: str, index: int, revision: Optional[int] = None) -> Dict[str, Any]:
-        return self._bridge.select_package(kind, index, revision)
-
-    def start_install(self, device_ids: Optional[List[str]] = None) -> Dict[str, Any]:
-        return self._bridge.start_install(device_ids)
-
-    def cancel_task(self) -> Dict[str, Any]:
-        return self._bridge.cancel_task()
-
-    def fetch_udid(self, device_id: Optional[str] = None) -> Dict[str, Any]:
-        return self._bridge.fetch_udid(device_id)
-
-    def fetch_crash_log(self, device_id: Optional[str] = None) -> Dict[str, Any]:
-        return self._bridge.fetch_crash_log(device_id)
-
-    def fetch_app_log(self, target_key: str, device_id: Optional[str] = None) -> Dict[str, Any]:
-        return self._bridge.fetch_app_log(target_key, device_id)
-
-    def open_path_in_explorer(self, target_path: str) -> Dict[str, Any]:
-        return self._bridge.open_path_in_explorer(target_path)
-
-    def choose_log_output_dir(self) -> Dict[str, Any]:
-        return self._bridge.choose_log_output_dir()
-
-    def update_settings(self, updates: Dict[str, Any]) -> Dict[str, Any]:
-        return self._bridge.update_settings(updates)
-
-    def diagnose_environment(self) -> Dict[str, Any]:
-        return self._bridge.diagnose_environment()
-
-    def clear_logs(self) -> Dict[str, Any]:
-        return self._bridge.clear_logs()
-
-    def window_start_drag(self) -> Dict[str, Any]:
-        return self._bridge.window_start_drag()
-
-    def window_start_resize(self, edge: str) -> Dict[str, Any]:
-        return self._bridge.window_start_resize(edge)
-
-    def window_minimize(self) -> Dict[str, Any]:
-        return self._bridge.window_minimize()
-
-    def window_toggle_maximize(self) -> Dict[str, Any]:
-        return self._bridge.window_toggle_maximize()
-
-    def window_close(self) -> Dict[str, Any]:
-        return self._bridge.window_close()

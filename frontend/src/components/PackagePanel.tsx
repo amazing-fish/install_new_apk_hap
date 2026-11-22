@@ -85,13 +85,13 @@ export function PackagePanel({
   return (
     <section className="flex flex-col rounded-xl border border-[var(--border-hairline)] bg-[var(--surface-card)] shadow-xs">
       {/* Directory bar */}
-      <div className="flex flex-wrap items-center gap-2 border-b border-[var(--border-hairline)] px-3 py-2">
-        <div className="flex items-center gap-1.5 mr-0.5">
+      <div className="flex flex-wrap items-center gap-2 border-b border-[var(--border-hairline)] px-3.5 py-2.5">
+        <div className="flex items-center gap-1.5 mr-1">
           <Package className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
-          <h2 className="text-[12.5px] font-semibold text-[var(--ink-primary)]">安装包</h2>
+          <h2 className="text-[13px] font-semibold text-[var(--ink-primary)]">安装包</h2>
         </div>
 
-        <div className="relative flex min-w-[160px] flex-1 items-center">
+        <div className="relative flex min-w-[220px] flex-1 items-center">
           <input
             value={folderInput}
             onChange={(e) => setFolderInput(e.target.value)}
@@ -99,7 +99,7 @@ export function PackagePanel({
               if (e.key === 'Enter') onScanFolder(folderInput);
             }}
             placeholder="输入安装包目录后按 Enter，或直接将 .apk / .hap 拖入窗口…"
-            className="font-mono-code h-7.5 w-full rounded-lg border border-[var(--border-hairline)] bg-[var(--surface-subtle)] pl-2.5 pr-8 text-[11.5px] text-[var(--ink-primary)] placeholder:font-sans placeholder:text-[var(--ink-muted)] focus:border-blue-500 focus:bg-[var(--surface-card)] focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+            className="font-mono-code h-8 w-full rounded-lg border border-[var(--border-hairline)] bg-[var(--surface-subtle)] pl-2.5 pr-8 text-[12px] text-[var(--ink-primary)] placeholder:font-sans placeholder:text-[var(--ink-muted)] focus:border-blue-500 focus:bg-[var(--surface-card)] focus:outline-none focus:ring-2 focus:ring-blue-500/20"
           />
           {recentDirs.length > 0 && (
             <div className="absolute right-1" ref={recentRef}>
@@ -141,7 +141,7 @@ export function PackagePanel({
           <button
             type="button"
             onClick={onChooseFolder}
-            className="flex h-7.5 items-center gap-1 rounded-lg border border-[var(--border-hairline)] bg-[var(--surface-subtle)] px-2.5 text-[11.5px] font-medium text-[var(--ink-primary)] transition-colors hover:bg-slate-200/70 dark:hover:bg-slate-700/50 cursor-pointer"
+            className="flex h-8 items-center gap-1.5 rounded-lg border border-[var(--border-hairline)] bg-[var(--surface-subtle)] px-2.5 text-[12px] font-medium text-[var(--ink-primary)] transition-colors hover:bg-slate-200/70 dark:hover:bg-slate-700/50 cursor-pointer"
           >
             <FolderOpen className="h-3.5 w-3.5 text-blue-600 dark:text-blue-400" />
             <span>选择目录</span>
@@ -152,9 +152,9 @@ export function PackagePanel({
             disabled={scanning || !folderInput.trim()}
             onClick={() => onScanFolder(folderInput)}
             title="扫描当前目录中的最新 APK/HAP"
-            className="flex h-7.5 items-center gap-1 rounded-lg border border-[var(--border-hairline)] bg-[var(--surface-card)] px-2.5 text-[11.5px] font-medium text-[var(--ink-primary)] transition-colors hover:bg-[var(--surface-subtle)] disabled:opacity-45 cursor-pointer"
+            className="flex h-8 items-center gap-1.5 rounded-lg border border-[var(--border-hairline)] bg-[var(--surface-card)] px-2.5 text-[12px] font-medium text-[var(--ink-primary)] transition-colors hover:bg-[var(--surface-subtle)] disabled:opacity-45 cursor-pointer"
           >
-            <RefreshCw className={`h-3 w-3 ${scanning ? 'animate-spin text-blue-500' : ''}`} />
+            <RefreshCw className={`h-3.5 w-3.5 ${scanning ? 'animate-spin text-blue-500' : ''}`} />
             <span>{scanning ? '扫描中' : '扫描'}</span>
           </button>
 
@@ -163,7 +163,7 @@ export function PackagePanel({
               type="button"
               onClick={() => onOpenFolder(folder)}
               title="在资源管理器中打开目录"
-              className="flex h-7.5 w-7.5 items-center justify-center rounded-lg border border-[var(--border-hairline)] bg-[var(--surface-card)] text-[var(--ink-secondary)] transition-colors hover:bg-[var(--surface-subtle)] hover:text-[var(--ink-primary)] cursor-pointer"
+              className="flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--border-hairline)] bg-[var(--surface-card)] text-[var(--ink-secondary)] transition-colors hover:bg-[var(--surface-subtle)] hover:text-[var(--ink-primary)] cursor-pointer"
             >
               <ExternalLink className="h-3.5 w-3.5" />
             </button>
@@ -172,7 +172,7 @@ export function PackagePanel({
       </div>
 
       {/* Dual APK / HAP Cards */}
-      <div className="grid grid-cols-1 gap-2.5 p-2.5 sm:grid-cols-2">
+      <div className="grid grid-cols-1 gap-3 p-3.5 md:grid-cols-2">
         <PackageSlotCard
           slot={apkSlot}
           accent="emerald"
@@ -248,10 +248,10 @@ function PackageSlotCard({
   return (
     <div
       ref={popoverRef}
-      className="relative flex flex-col justify-between rounded-xl border border-[var(--border-hairline)] bg-[var(--surface-subtle)] p-2.5 transition-colors hover:border-slate-300 dark:hover:border-slate-600"
+      className="relative flex flex-col justify-between rounded-xl border border-[var(--border-hairline)] bg-[var(--surface-subtle)] p-3 transition-colors hover:border-slate-300 dark:hover:border-slate-600"
     >
       {/* Subtle left accent line */}
-      <div className={`absolute left-0 top-2.5 bottom-2.5 w-[3px] rounded-r-full ${stripClass} opacity-80`} />
+      <div className={`absolute left-0 top-3 bottom-3 w-[3px] rounded-r-full ${stripClass} opacity-80`} />
 
       {/* Top row: platform tag + candidate switcher */}
       <div className="flex items-center justify-between gap-2 pl-1.5">
@@ -295,15 +295,15 @@ function PackageSlotCard({
 
       {/* Body */}
       {!active ? (
-        <div className="mt-2 flex items-center gap-2 pl-1.5 py-1.5 text-[11.5px] text-[var(--ink-muted)]">
-          <Upload className="h-3.5 w-3.5 shrink-0 opacity-50" />
+        <div className="mt-3 flex items-center gap-2.5 pl-1.5 py-2 text-[12px] text-[var(--ink-muted)]">
+          <Upload className="h-4 w-4 opacity-50" />
           <span>未找到 {slot.kind}，可选择目录或直接拖入文件</span>
         </div>
       ) : (
-        <div className="mt-2 flex flex-col gap-1 pl-1.5">
+        <div className="mt-2.5 flex flex-col gap-1.5 pl-1.5">
           <div className="flex items-baseline justify-between gap-2">
             <div className="flex min-w-0 items-center gap-1.5">
-              <span className="truncate text-[13.5px] font-semibold text-[var(--ink-primary)]">
+              <span className="truncate text-[14px] font-semibold text-[var(--ink-primary)]">
                 {active.appName || active.filename}
               </span>
               {!active.labelLoaded && (
@@ -311,7 +311,7 @@ function PackageSlotCard({
               )}
             </div>
             {active.versionText && (
-              <span className="font-mono-code shrink-0 rounded-md bg-[var(--surface-card)] border border-[var(--border-hairline)] px-1.5 py-0.5 text-[10.5px] font-medium text-[var(--ink-secondary)]">
+              <span className="font-mono-code shrink-0 rounded-md bg-[var(--surface-card)] border border-[var(--border-hairline)] px-1.5 py-0.5 text-[11px] font-medium text-[var(--ink-secondary)]">
                 v{active.versionText}
               </span>
             )}
@@ -335,8 +335,8 @@ function PackageSlotCard({
           ) : null}
 
           {/* File details row */}
-          <div className="mt-0.5 flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-[10.5px] text-[var(--ink-muted)]">
-            <span className="font-mono-code max-w-[200px] truncate" title={active.path}>
+          <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-[var(--ink-muted)]">
+            <span className="font-mono-code max-w-[240px] truncate" title={active.path}>
               {active.filename}
             </span>
             <span className="inline-flex items-center gap-1">
