@@ -152,9 +152,15 @@ def _is_extracted_tools_dir_valid(target_dir: Path, manifest_bytes: bytes, manif
     try:
         if not manifest_file.is_file() or manifest_file.read_bytes() != manifest_bytes:
             return False
-        for name in manifest.get("files", {}):
+        for name, expected_hash in manifest.get("files", {}).items():
             item = target_dir / name
-            if not item.is_file() or item.stat().st_size <= 0:
+            if not item.is_file() or not isinstance(expected_hash, str):
+                return False
+            hasher = hashlib.sha256()
+            with item.open("rb") as handle:
+                while chunk := handle.read(65536):
+                    hasher.update(chunk)
+            if hasher.hexdigest() != expected_hash:
                 return False
         return True
     except OSError:

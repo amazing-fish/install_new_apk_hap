@@ -32,7 +32,7 @@ def tool_fingerprint(tool_path: Optional[str]) -> Optional[tuple]:
     if manifest_path.is_file():
         try:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            files = manifest.get("files")
+            files = manifest.get("files") if isinstance(manifest, dict) else None
             if isinstance(files, dict):
                 expected = files.get(path.name)
                 if isinstance(expected, str) and len(expected) == 64:
@@ -42,7 +42,7 @@ def tool_fingerprint(tool_path: Optional[str]) -> Optional[tuple]:
 
     try:
         st = path.stat()
-        stat_key = (str(path.resolve()), st.st_size, st.st_mtime_ns)
+        stat_key = (str(path.resolve()), st.st_size, st.st_mtime_ns, st.st_ctime_ns, st.st_ino)
     except OSError:
         return ("missing", str(path))
 

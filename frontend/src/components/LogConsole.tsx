@@ -261,7 +261,7 @@ export function LogConsole({ logs, onClear, onCopyLogs, onCopyLine, onOpenPath }
                       type="button"
                       onClick={() => onCopyLine(`[${entry.timestamp}] [${entry.level.toUpperCase()}] ${entry.message}`)}
                       title="复制此条日志"
-                      className="flex h-4.5 w-4.5 shrink-0 items-center justify-center rounded text-[var(--ink-muted)] opacity-0 transition-opacity hover:bg-slate-300/60 hover:text-[var(--ink-primary)] group-hover:opacity-100 dark:hover:bg-slate-700/60 cursor-pointer"
+                      className="flex h-4.5 w-4.5 shrink-0 items-center justify-center rounded text-[var(--ink-muted)] opacity-0 transition-opacity hover:bg-slate-300/60 hover:text-[var(--ink-primary)] focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60 group-hover:opacity-100 dark:hover:bg-slate-700/60 cursor-pointer"
                     >
                       <Copy className="h-3 w-3" />
                     </button>

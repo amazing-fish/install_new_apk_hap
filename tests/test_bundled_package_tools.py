@@ -85,17 +85,18 @@ def test_onefile_zip_lazily_extracts_to_persistent_cache_and_reuses_fast_path(mo
     meipass = tmp_path / 'mei_run1'
     meipass.mkdir()
     _write_tools_zip(meipass / 'package_tools.zip')
-    cache_base = tmp_path / 'localappdata'
+    cache_base = tmp_path / 'persistent_cache'
+    cache_base.mkdir()
 
     monkeypatch.setattr(sys, 'frozen', True, raising=False)
     monkeypatch.setattr(sys, '_MEIPASS', str(meipass), raising=False)
-    monkeypatch.setenv('LOCALAPPDATA', str(cache_base))
+    monkeypatch.setattr(tools, '_persistent_tools_cache_root', lambda: cache_base)
     for name in ('AAPT2_EXECUTABLE', 'RESTOOL_EXECUTABLE'):
         monkeypatch.delenv(name, raising=False)
 
     first = tools.bundled_tools_directory()
     assert first is not None and first.is_dir()
-    assert str(cache_base) in str(first)
+    assert first.parent == cache_base
     assert (first / 'aapt2.exe').is_file()
     assert (first / 'restool.exe').is_file()
     assert (first / 'manifest.json').is_file()
@@ -112,6 +113,23 @@ def test_onefile_zip_lazily_extracts_to_persistent_cache_and_reuses_fast_path(mo
 
     resolved = tools.resolve_metadata_tools()
     assert resolved == MetadataTools(str(first / 'aapt2.exe'), str(first / 'restool.exe'))
+
+    # Corrupting a cached binary without touching manifest.json must trigger repair.
+    (first / 'aapt2.exe').write_bytes(b'corrupted-nonempty-payload')
+    repaired = tools.bundled_tools_directory()
+    assert repaired == first
+    assert (repaired / 'aapt2.exe').read_bytes() == b'fake-aapt2-binary-payload'
+
+
+def test_persistent_tools_cache_root_uses_localappdata_on_windows(monkeypatch, tmp_path):
+    monkeypatch.setattr(tools.os, 'name', 'nt')
+    local_dir = tmp_path / 'localappdata'
+    monkeypatch.setenv('LOCALAPPDATA', str(local_dir))
+    monkeypatch.delenv('APPDATA', raising=False)
+
+    root = tools._persistent_tools_cache_root()
+    assert root == local_dir / 'install_new_apk_hap' / 'package_tools'
+    assert root.is_dir()
 
 
 def test_onefile_zip_falls_back_to_temp_when_localappdata_missing(monkeypatch, tmp_path):

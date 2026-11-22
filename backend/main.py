@@ -17,7 +17,12 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 from bridge import InstallerBridge, JsApiFacade
-from win_window import NativeWindowController, compute_initial_window_size, theme_background_color
+from win_window import (
+    NativeWindowController,
+    compute_initial_window_size,
+    enable_dpi_awareness,
+    theme_background_color,
+)
 
 
 def _web_dist_index() -> Path:
@@ -68,7 +73,7 @@ def _select_http_port(preferred: int = 42001) -> int:
     return 0
 
 
-def _build_fast_server_class():
+def _build_fast_server_class(*, debug: bool = False):
     """Create a BottleServer subclass that skips reverse DNS lookups and caches hashed assets."""
     from socketserver import ThreadingMixIn
     from wsgiref.simple_server import WSGIRequestHandler, WSGIServer, make_server
@@ -132,14 +137,14 @@ def _build_fast_server_class():
             def asset(file: str = "index.html"):
                 if not server.root_path:
                     return ""
-                if file.startswith("assets/"):
-                    bottle.response.set_header("Cache-Control", "public, max-age=31536000, immutable")
-                else:
-                    bottle.response.set_header("Cache-Control", "no-cache")
-                return bottle.static_file(file, root=server.root_path)
+                cache_policy = "public, max-age=31536000, immutable" if file.startswith("assets/") else "no-cache"
+                resp = bottle.static_file(file, root=server.root_path, headers={"Cache-Control": cache_policy})
+                resp.set_header("Cache-Control", cache_policy)
+                return resp
 
             server.port = http_port or _select_http_port()
-            quiet = not webview._state["debug"]
+            state_obj = getattr(webview, "_state", None) or getattr(webview, "_settings", {})
+            quiet = not bool(debug or (state_obj.get("debug") if isinstance(state_obj, dict) else False))
             server.thread = threading.Thread(
                 target=lambda: bottle.run(
                     app=app,
@@ -182,6 +187,7 @@ def _bind_native_drop(window, bridge: InstallerBridge) -> None:
 def launch_desktop(dev_url: Optional[str] = None, debug: bool = False) -> int:
     import webview
 
+    enable_dpi_awareness()
     bridge = InstallerBridge()
     cfg = bridge.config_manager.data
     theme = str(cfg.get("theme", "system"))
@@ -229,8 +235,9 @@ def launch_desktop(dev_url: Optional[str] = None, debug: bool = False) -> int:
 
     def _on_resized(width, height):
         if window_controller.is_normal() and isinstance(width, int) and isinstance(height, int):
-            if width >= min_size[0] and height >= min_size[1]:
-                last_normal_size[0] = (width, height)
+            logical_w, logical_h = window_controller.physical_to_logical_size(width, height)
+            if logical_w >= min_size[0] and logical_h >= min_size[1]:
+                last_normal_size[0] = (logical_w, logical_h)
 
     def _on_maximized():
         bridge.notify_window_state(True)
@@ -259,7 +266,7 @@ def launch_desktop(dev_url: Optional[str] = None, debug: bool = False) -> int:
 
     gui_backend = "edgechromium" if os.name == "nt" else None
     http_port = _select_http_port() if use_http_server else None
-    fast_server = _build_fast_server_class() if use_http_server else webview.http.BottleServer
+    fast_server = _build_fast_server_class(debug=debug) if use_http_server else webview.http.BottleServer
     webview.start(
         gui=gui_backend,
         http_server=use_http_server,

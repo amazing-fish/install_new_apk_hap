@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import ctypes
 from ctypes import wintypes
+import functools
+import importlib.metadata
 import os
 from pathlib import Path
 from typing import Optional, Tuple
@@ -86,6 +88,24 @@ def theme_background_color(theme: str) -> str:
     return "#0b0e14" if resolve_theme_dark(theme) else "#f3f5f8"
 
 
+@functools.lru_cache(maxsize=1)
+def _pywebview_major_version() -> int:
+    try:
+        return int(importlib.metadata.version("pywebview").split(".", 1)[0])
+    except Exception:
+        return 6
+
+
+def enable_dpi_awareness() -> None:
+    """Enable Windows process DPI awareness before querying primary work area."""
+    if os.name != "nt":
+        return
+    try:
+        ctypes.windll.user32.SetProcessDPIAware()
+    except OSError:
+        pass
+
+
 def get_primary_work_area_logical() -> Optional[Tuple[int, int]]:
     """Return primary monitor working area (width, height) in logical pixels."""
     if os.name != "nt":
@@ -103,7 +123,7 @@ def get_primary_work_area_logical() -> Optional[Tuple[int, int]]:
             dpi = 96
         scale = max(1.0, (dpi or 96) / 96.0)
         return max(320, int(phys_w / scale)), max(240, int(phys_h / scale))
-    except Exception:
+    except (OSError, AttributeError, ValueError):
         return None
 
 
@@ -382,6 +402,23 @@ class NativeWindowController:
                 self._form.WindowState = WinForms.FormWindowState.Minimized
 
         return self._invoke_ui(_min)
+
+    def window_scale(self) -> float:
+        if os.name == "nt" and self._hwnd and _GetDpiForWindow is not None:
+            try:
+                dpi = int(_GetDpiForWindow(self._hwnd))
+                if dpi > 0:
+                    return dpi / 96.0
+            except OSError:
+                pass
+        return 1.0
+
+    def physical_to_logical_size(self, width: int, height: int) -> Tuple[int, int]:
+        """Convert pywebview resized dimensions to 96-DPI logical startup units."""
+        scale = self.window_scale()
+        if scale <= 1.0 or _pywebview_major_version() >= 6:
+            return int(width), int(height)
+        return int(round(width / scale)), int(round(height / scale))
 
     def is_maximized(self) -> bool:
         if os.name == "nt" and self._hwnd:

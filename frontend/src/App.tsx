@@ -68,6 +68,7 @@ export default function App() {
     settings: 0,
   });
   const logClearGenRef = useRef<number>(0);
+  const toolsEventSeenRef = useRef(false);
 
   const pushToast = useCallback((toast: ToastItem) => {
     setToasts((prev) => [...prev.slice(-3), toast]);
@@ -119,6 +120,7 @@ export default function App() {
   useEffect(() => {
     revisionsRef.current = { devices: 0, packages: 0, task: 0, settings: 0 };
     logClearGenRef.current = 0;
+    toolsEventSeenRef.current = false;
 
     window.__INSTALLER_EVENT__ = (event: InstallerEvent) => {
       const { type, payload } = event;
@@ -183,6 +185,7 @@ export default function App() {
         setSettings(payload as AppSettings);
       } else if (type === 'tools') {
         if (payload && typeof payload === 'object') {
+          toolsEventSeenRef.current = true;
           setTools(payload as Record<string, ToolDiagnostic>);
         }
       } else if (type === 'window_state') {
@@ -251,7 +254,9 @@ export default function App() {
         if (acceptSnapshotRevision('settings', init.revisions?.settings)) {
           setSettings(init.settings);
         }
-        setTools(init.tools);
+        if (!toolsEventSeenRef.current && init.tools && Object.keys(init.tools).length > 0) {
+          setTools(init.tools);
+        }
         setAppLogTargets(init.appLogTargets);
         setWindowMaximized(Boolean(init.windowMaximized));
         setInitError(null);

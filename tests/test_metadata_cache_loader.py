@@ -150,3 +150,27 @@ def test_metadata_cache_hits_across_different_onefile_tool_paths_with_same_manif
         assert batches2[0][0][hap].name == "跨重启命中应用"
     finally:
         loader2.close()
+
+
+def test_tool_fingerprint_handles_non_dict_manifest_and_same_size_replacement(monkeypatch, tmp_path):
+    import os
+    from metadata.loader import tool_fingerprint
+
+    tool = tmp_path / "aapt2.exe"
+    tool.write_bytes(b"aaaa")
+    (tmp_path / "manifest.json").write_text("[1, 2, 3]", encoding="utf-8")
+
+    fp1 = tool_fingerprint(str(tool))
+    assert fp1[0] == "file-sha256"
+
+    # Replace with same size & identical mtime; st_ino / st_ctime or content check should not crash.
+    st_before = tool.stat()
+    tool2 = tmp_path / "aapt2_new.exe"
+    tool2.write_bytes(b"bbbb")
+    os.utime(tool2, ns=(st_before.st_atime_ns, st_before.st_mtime_ns))
+    os.replace(tool2, tool)
+    os.utime(tool, ns=(st_before.st_atime_ns, st_before.st_mtime_ns))
+
+    fp2 = tool_fingerprint(str(tool))
+    assert fp2[0] == "file-sha256"
+    assert fp2 != fp1
