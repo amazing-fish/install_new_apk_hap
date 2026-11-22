@@ -431,3 +431,81 @@ def test_clear_logs_increments_clear_gen_and_tags_events(tmp_path: Path):
         assert after["id"] > before["id"]
     finally:
         bridge.close()
+
+
+def test_js_api_facade_exposes_only_explicit_rpc_methods(tmp_path: Path):
+    from bridge import JsApiFacade
+
+    bridge = InstallerBridge(config_path=tmp_path / "cfg.json", emit=lambda *_: None, auto_start=False)
+    try:
+        facade = JsApiFacade(bridge)
+        public_attrs = sorted(name for name in dir(facade) if not name.startswith("_"))
+        expected = sorted([
+            "get_initial_state",
+            "refresh_devices",
+            "set_selected_devices",
+            "save_device_name",
+            "choose_folder",
+            "scan_folder",
+            "handle_dropped_paths",
+            "select_package",
+            "start_install",
+            "cancel_task",
+            "fetch_udid",
+            "fetch_crash_log",
+            "fetch_app_log",
+            "open_path_in_explorer",
+            "choose_log_output_dir",
+            "update_settings",
+            "diagnose_environment",
+            "clear_logs",
+            "window_start_drag",
+            "window_start_resize",
+            "window_minimize",
+            "window_toggle_maximize",
+            "window_close",
+        ])
+        assert public_attrs == expected
+        assert len(public_attrs) == 23
+    finally:
+        bridge.close()
+
+
+def test_window_size_persistence_and_work_area_clamping(tmp_path: Path):
+    from win_window import compute_initial_window_size
+
+    cfg_path = tmp_path / "app_config.json"
+    mgr = ConfigManager(cfg_path)
+    mgr.set_window_size(840, 820)
+    mgr.set_window_size(100, 100)  # invalid below minimum -> ignored
+    reloaded = ConfigManager(cfg_path)
+    assert reloaded.data["window_width"] == 840
+    assert reloaded.data["window_height"] == 820
+
+    # Clamp 860x860 cleanly onto a 1080p 150% DPI screen (1280x680 logical work area)
+    w, h, (min_w, min_h) = compute_initial_window_size(None, None, work_area=(1280, 680))
+    assert w == 860
+    assert h == 640
+    assert min_w <= w and min_h <= h
+
+
+def test_log_entry_serializes_action_path_and_label(tmp_path: Path):
+    emitted: list[tuple[str, dict]] = []
+    bridge = InstallerBridge(
+        config_path=tmp_path / "cfg.json",
+        emit=lambda et, p: emitted.append((et, p)),
+        auto_start=False,
+    )
+    try:
+        entry = bridge._append_log(
+            "崩溃日志已导出",
+            "success",
+            action_path=str(tmp_path / "crash.zip"),
+            action_label="打开位置",
+        )
+        assert entry["actionPath"] == str(tmp_path / "crash.zip")
+        assert entry["actionLabel"] == "打开位置"
+        log_events = [p for et, p in emitted if et == "log"]
+        assert log_events[-1]["actionPath"] == str(tmp_path / "crash.zip")
+    finally:
+        bridge.close()

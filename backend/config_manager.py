@@ -21,6 +21,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "theme": "system",
     "parallel_install": True,
     "max_concurrency": 4,
+    "window_width": None,
+    "window_height": None,
 }
 
 
@@ -42,6 +44,12 @@ def _valid_max_concurrency(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= 8
 
 
+def _valid_window_dim(min_v: int, max_v: int):
+    return lambda value: value is None or (
+        isinstance(value, int) and not isinstance(value, bool) and min_v <= value <= max_v
+    )
+
+
 FIELD_VALIDATORS = {
     "device_names": _valid_device_names,
     "last_scan_dir": lambda value: isinstance(value, str),
@@ -50,6 +58,8 @@ FIELD_VALIDATORS = {
     "theme": _valid_theme,
     "parallel_install": lambda value: isinstance(value, bool),
     "max_concurrency": _valid_max_concurrency,
+    "window_width": _valid_window_dim(500, 4000),
+    "window_height": _valid_window_dim(400, 3000),
 }
 
 
@@ -160,6 +170,16 @@ class ConfigManager:
                     self._config[key] = value
             self.save()
             return deepcopy(self._config)
+
+    def set_window_size(self, width: int, height: int) -> None:
+        if not (FIELD_VALIDATORS["window_width"](width) and FIELD_VALIDATORS["window_height"](height)):
+            return
+        with self._lock:
+            if self._config.get("window_width") == width and self._config.get("window_height") == height:
+                return
+            self._config["window_width"] = width
+            self._config["window_height"] = height
+            self.save()
 
     def resolved_log_output_dir(self) -> Path:
         custom = str(self._config.get("log_output_dir", "")).strip()

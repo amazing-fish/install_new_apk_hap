@@ -8,10 +8,15 @@ in source runs on Windows so local development gets offline metadata parsing too
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
+import json
 import os
 import re
 import shutil
 import sys
+import tempfile
+import threading
+import zipfile
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -121,10 +126,119 @@ def _configured_tool(variable: str) -> Optional[str]:
     return executable_or_none(configured_path(value)) if value.strip('"') else None
 
 
+_BUNDLED_TOOLS_LOCK = threading.Lock()
+
+
+def _persistent_tools_cache_root() -> Path:
+    """Return a writable persistent directory for lazily extracted bundled tools."""
+    if os.name == "nt":
+        for var in ("LOCALAPPDATA", "APPDATA"):
+            base = os.environ.get(var, "").strip()
+            if base:
+                candidate = Path(base) / "install_new_apk_hap" / "package_tools"
+                try:
+                    candidate.mkdir(parents=True, exist_ok=True)
+                    if os.access(candidate, os.W_OK):
+                        return candidate
+                except OSError:
+                    pass
+    fallback = Path(tempfile.gettempdir()) / "install_new_apk_hap_tools"
+    fallback.mkdir(parents=True, exist_ok=True)
+    return fallback
+
+
+def _is_extracted_tools_dir_valid(target_dir: Path, manifest_bytes: bytes, manifest: dict) -> bool:
+    manifest_file = target_dir / "manifest.json"
+    try:
+        if not manifest_file.is_file() or manifest_file.read_bytes() != manifest_bytes:
+            return False
+        for name in manifest.get("files", {}):
+            item = target_dir / name
+            if not item.is_file() or item.stat().st_size <= 0:
+                return False
+        return True
+    except OSError:
+        return False
+
+
+def _extract_bundled_tools_zip(zip_path: Path) -> Optional[Path]:
+    """Lazily extract `package_tools.zip` once into persistent cache and verify SHA-256."""
+    with zipfile.ZipFile(zip_path, "r") as archive:
+        manifest_bytes = archive.read("manifest.json")
+        manifest = json.loads(manifest_bytes.decode("utf-8"))
+        files = manifest.get("files")
+        if (
+            manifest.get("schema_version") != 1
+            or manifest.get("platform") != "windows-x64"
+            or not isinstance(files, dict)
+            or not files
+        ):
+            raise ValueError("Invalid bundled package_tools manifest")
+
+        allowed = set(files.keys()) | {"manifest.json"}
+        for member in archive.namelist():
+            if member not in allowed or "/" in member or "\\" in member or ".." in member:
+                raise ValueError(f"Unexpected archive entry in package_tools.zip: {member}")
+
+        digest = hashlib.sha256(manifest_bytes).hexdigest()[:16]
+        cache_root = _persistent_tools_cache_root()
+        target_dir = cache_root / digest
+
+        if _is_extracted_tools_dir_valid(target_dir, manifest_bytes, manifest):
+            return target_dir
+
+        tmp_dir = Path(tempfile.mkdtemp(prefix=f".extract_{digest}_", dir=cache_root))
+        try:
+            for name, expected_hash in files.items():
+                data = archive.read(name)
+                if hashlib.sha256(data).hexdigest() != expected_hash:
+                    raise ValueError(f"SHA-256 mismatch extracting bundled tool: {name}")
+                dest = tmp_dir / name
+                dest.write_bytes(data)
+                if os.name != "nt":
+                    dest.chmod(0o755)
+            (tmp_dir / "manifest.json").write_bytes(manifest_bytes)
+
+            if _is_extracted_tools_dir_valid(target_dir, manifest_bytes, manifest):
+                return target_dir
+
+            if target_dir.exists():
+                stale_dir = Path(tempfile.mkdtemp(prefix=f".stale_{digest}_", dir=cache_root))
+                shutil.rmtree(stale_dir, ignore_errors=True)
+                try:
+                    os.replace(target_dir, stale_dir)
+                except OSError:
+                    shutil.rmtree(target_dir, ignore_errors=True)
+                else:
+                    shutil.rmtree(stale_dir, ignore_errors=True)
+            try:
+                os.replace(tmp_dir, target_dir)
+            except OSError:
+                if _is_extracted_tools_dir_valid(target_dir, manifest_bytes, manifest):
+                    return target_dir
+                raise
+            return target_dir
+        finally:
+            if tmp_dir.exists():
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
 def bundled_tools_directory() -> Optional[Path]:
-    """Return the frozen application's extraction directory when packaged."""
+    """Return the frozen application's package_tools directory, lazily extracting archive if needed."""
     root = getattr(sys, "_MEIPASS", None) if getattr(sys, "frozen", False) else None
-    return Path(root) / "package_tools" if root else None
+    if not root:
+        return None
+    root_path = Path(root)
+    direct = root_path / "package_tools"
+    if direct.is_dir():
+        return direct
+    archive = root_path / "package_tools.zip"
+    if archive.is_file():
+        with _BUNDLED_TOOLS_LOCK:
+            if direct.is_dir():
+                return direct
+            return _extract_bundled_tools_zip(archive)
+    return direct
 
 
 def _repo_vendor_tools_directory() -> Optional[Path]:

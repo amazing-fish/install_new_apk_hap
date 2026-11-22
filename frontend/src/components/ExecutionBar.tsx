@@ -51,19 +51,19 @@ export function ExecutionBar({
   const isCancelling = Boolean(task?.cancelled);
 
   return (
-    <footer className="flex shrink-0 items-center justify-between gap-4 border-t border-[var(--border-hairline)] bg-[var(--surface-card)] px-4 py-3 select-none">
+    <footer className="flex shrink-0 items-center justify-between gap-3 border-t border-[var(--border-hairline)] bg-[var(--surface-card)] px-3.5 py-2.5 select-none">
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <span className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${statusTone}`}>
             {isRunning && <Loader2 className="h-3 w-3 animate-spin" />}
             {installStatus}
           </span>
-          <span className="truncate text-[12.5px] font-medium text-[var(--ink-primary)]" title={summaryText}>
+          <span className="truncate text-[12px] font-medium text-[var(--ink-primary)]" title={summaryText}>
             {summaryText}
           </span>
         </div>
 
-        <div className="mt-1 flex items-center gap-3 text-[11px] text-[var(--ink-muted)]">
+        <div className="mt-1 flex items-center gap-2.5 text-[11px] text-[var(--ink-muted)]">
           <button
             type="button"
             disabled={isRunning}
@@ -78,7 +78,7 @@ export function ExecutionBar({
             <Zap className="h-3 w-3" />
             <span>{parallelInstall ? `并行安装 (${maxConcurrency}路)` : '顺序安装'}</span>
           </button>
-          <span className="hidden sm:inline">快捷键：F5 刷新 · Ctrl+Enter 安装 · Esc 中止</span>
+          <span className="hidden md:inline">快捷键：F5 刷新 · Ctrl+Enter 安装 · Esc 中止</span>
         </div>
       </div>
 
@@ -87,7 +87,7 @@ export function ExecutionBar({
         disabled={isCancelling || (!isRunning && (!hasAnyPackage || scanning))}
         onClick={onPrimaryAction}
         title={scanning && !isRunning ? '正在扫描安装包目录，请稍候…' : undefined}
-        className={`flex h-10 shrink-0 items-center gap-2 rounded-xl px-5 text-[13px] font-semibold shadow-sm transition-all active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer ${
+        className={`flex h-9 shrink-0 items-center gap-2 rounded-xl px-4 text-[12.5px] font-semibold shadow-sm transition-all active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 cursor-pointer ${
           isRunning
             ? 'bg-rose-600 text-white shadow-rose-600/25 hover:bg-rose-700'
             : 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-blue-600/25 hover:brightness-105'

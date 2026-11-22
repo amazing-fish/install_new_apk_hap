@@ -58,6 +58,7 @@ export default function App() {
   const [appLogTargets, setAppLogTargets] = useState<AppLogTargetItem[]>([]);
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [windowMaximized, setWindowMaximized] = useState(false);
   const [draggingOver, setDraggingOver] = useState(false);
   const dragDepthRef = useRef(0);
   const revisionsRef = useRef<Record<string, number>>({
@@ -180,6 +181,12 @@ export default function App() {
       } else if (type === 'settings') {
         if (!acceptEventRevision('settings', payload?.rev)) return;
         setSettings(payload as AppSettings);
+      } else if (type === 'tools') {
+        if (payload && typeof payload === 'object') {
+          setTools(payload as Record<string, ToolDiagnostic>);
+        }
+      } else if (type === 'window_state') {
+        setWindowMaximized(Boolean(payload?.maximized));
       } else if (type === 'toast') {
         const t = payload as ToastItem;
         if (t.copyText) {
@@ -246,6 +253,7 @@ export default function App() {
         }
         setTools(init.tools);
         setAppLogTargets(init.appLogTargets);
+        setWindowMaximized(Boolean(init.windowMaximized));
         setInitError(null);
         setReady(true);
       } catch (err) {
@@ -392,12 +400,18 @@ export default function App() {
         version={version}
         theme={settings.theme}
         tools={tools}
+        maximized={windowMaximized}
         onThemeChange={(theme) => handleUpdateSettings({ theme })}
         onOpenSettings={() => setSettingsOpen(true)}
+        onStartDrag={() => bridgeApi.windowStartDrag()}
+        onStartResize={(edge) => bridgeApi.windowStartResize(edge)}
+        onMinimize={() => bridgeApi.windowMinimize()}
+        onToggleMaximize={() => bridgeApi.windowToggleMaximize()}
+        onClose={() => bridgeApi.windowClose()}
       />
 
       {/* Main Workspace */}
-      <main className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3.5">
+      <main className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto p-3">
         <DevicePanel
           devices={devices}
           selectedDeviceIds={selectedDeviceIds}
@@ -437,6 +451,10 @@ export default function App() {
           onCopyLogs={(text) => {
             if (text) copyToClipboard(text, '日志');
           }}
+          onCopyLine={(text) => {
+            if (text) copyToClipboard(text, '日志行');
+          }}
+          onOpenPath={(path) => bridgeApi.openPathInExplorer(path)}
         />
       </main>
 
