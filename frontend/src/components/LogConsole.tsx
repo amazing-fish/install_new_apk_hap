@@ -4,7 +4,6 @@ import {
   ChevronDown,
   ChevronUp,
   Copy,
-  FolderOpen,
   Search,
   Terminal,
   Trash2,
@@ -16,8 +15,6 @@ interface LogConsoleProps {
   logs: LogEntry[];
   onClear: () => void;
   onCopyLogs: (text: string) => void;
-  onCopyLine: (text: string) => void;
-  onOpenPath: (path: string) => void;
 }
 
 const LEVEL_FILTERS: { key: 'all' | LogLevel; label: string }[] = [
@@ -56,13 +53,12 @@ const LEVEL_STYLES: Record<LogLevel, { badge: string; text: string; label: strin
   },
 };
 
-export function LogConsole({ logs, onClear, onCopyLogs, onCopyLine, onOpenPath }: LogConsoleProps) {
+export function LogConsole({ logs, onClear, onCopyLogs }: LogConsoleProps) {
   const [levelFilter, setLevelFilter] = useState<'all' | LogLevel>('all');
   const [query, setQuery] = useState('');
   const [autoScroll, setAutoScroll] = useState(true);
   const [collapsed, setCollapsed] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const isProgrammaticScrollRef = useRef(false);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -77,58 +73,26 @@ export function LogConsole({ logs, onClear, onCopyLogs, onCopyLine, onOpenPath }
 
   const lastLogId = filtered.length > 0 ? filtered[filtered.length - 1].id : 0;
 
-  const scrollToBottom = () => {
-    const el = scrollRef.current;
-    if (!el) return;
-    isProgrammaticScrollRef.current = true;
-    el.scrollTop = el.scrollHeight;
-    window.requestAnimationFrame(() => {
-      isProgrammaticScrollRef.current = false;
-    });
-  };
-
   useEffect(() => {
-    if (autoScroll && !collapsed) {
-      scrollToBottom();
+    if (autoScroll && !collapsed && scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
   }, [filtered.length, lastLogId, autoScroll, collapsed]);
-
-  const handleScroll = () => {
-    if (isProgrammaticScrollRef.current) return;
-    const el = scrollRef.current;
-    if (!el) return;
-    const distanceToBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-    const atBottom = distanceToBottom <= 24;
-    if (!atBottom && autoScroll) {
-      setAutoScroll(false);
-    } else if (atBottom && !autoScroll) {
-      setAutoScroll(true);
-    }
-  };
 
   const handleCopy = () => {
     const text = filtered.map((l) => `[${l.timestamp}] [${l.level.toUpperCase()}] ${l.message}`).join('\n');
     onCopyLogs(text);
   };
 
-  const handleToggleAutoScroll = () => {
-    if (!autoScroll) {
-      setAutoScroll(true);
-      scrollToBottom();
-    } else {
-      setAutoScroll(false);
-    }
-  };
-
   return (
     <section className="flex min-h-0 flex-1 flex-col rounded-xl border border-[var(--border-hairline)] bg-[var(--surface-card)] shadow-xs overflow-hidden">
       {/* Toolbar */}
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--border-hairline)] px-3 py-1.5">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--border-hairline)] px-3.5 py-2">
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
             onClick={() => setCollapsed((v) => !v)}
-            className="flex items-center gap-1.5 text-[12.5px] font-semibold text-[var(--ink-primary)] hover:text-blue-600 dark:hover:text-blue-400 cursor-pointer"
+            className="flex items-center gap-1.5 text-[13px] font-semibold text-[var(--ink-primary)] hover:text-blue-600 dark:hover:text-blue-400 cursor-pointer"
           >
             <Terminal className="h-4 w-4 text-slate-500" />
             <span>运行日志</span>
@@ -166,7 +130,7 @@ export function LogConsole({ logs, onClear, onCopyLogs, onCopyLine, onOpenPath }
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="筛选日志关键词…"
-                className="h-6.5 w-32 rounded-lg border border-[var(--border-hairline)] bg-[var(--surface-subtle)] pl-7 pr-6 text-[11.5px] text-[var(--ink-primary)] placeholder:text-[var(--ink-muted)] focus:w-44 focus:border-blue-500 focus:bg-[var(--surface-card)] focus:outline-none transition-all"
+                className="h-7 w-40 rounded-lg border border-[var(--border-hairline)] bg-[var(--surface-subtle)] pl-7 pr-6 text-[11.5px] text-[var(--ink-primary)] placeholder:text-[var(--ink-muted)] focus:w-52 focus:border-blue-500 focus:bg-[var(--surface-card)] focus:outline-none transition-all"
               />
               {query && (
                 <button
@@ -181,9 +145,9 @@ export function LogConsole({ logs, onClear, onCopyLogs, onCopyLine, onOpenPath }
 
             <button
               type="button"
-              onClick={handleToggleAutoScroll}
-              title={autoScroll ? '已开启自动滚动到底部（向上翻阅时自动暂停）' : '自动滚动已暂停，点击恢复并滚到底部'}
-              className={`flex h-6.5 w-6.5 items-center justify-center rounded-lg border transition-colors cursor-pointer ${
+              onClick={() => setAutoScroll((v) => !v)}
+              title={autoScroll ? '已开启自动滚动到底部' : '已暂停自动滚动'}
+              className={`flex h-7 w-7 items-center justify-center rounded-lg border transition-colors cursor-pointer ${
                 autoScroll
                   ? 'border-blue-500/30 bg-blue-500/10 text-blue-600 dark:text-blue-400'
                   : 'border-[var(--border-hairline)] bg-[var(--surface-subtle)] text-[var(--ink-muted)]'
@@ -196,7 +160,7 @@ export function LogConsole({ logs, onClear, onCopyLogs, onCopyLine, onOpenPath }
               type="button"
               onClick={handleCopy}
               title="复制当前日志"
-              className="flex h-6.5 items-center gap-1 rounded-lg border border-[var(--border-hairline)] bg-[var(--surface-subtle)] px-2 text-[11px] font-medium text-[var(--ink-secondary)] transition-colors hover:text-[var(--ink-primary)] cursor-pointer"
+              className="flex h-7 items-center gap-1 rounded-lg border border-[var(--border-hairline)] bg-[var(--surface-subtle)] px-2 text-[11.5px] font-medium text-[var(--ink-secondary)] transition-colors hover:text-[var(--ink-primary)] cursor-pointer"
             >
               <Copy className="h-3 w-3" />
               <span>复制</span>
@@ -206,7 +170,7 @@ export function LogConsole({ logs, onClear, onCopyLogs, onCopyLine, onOpenPath }
               type="button"
               onClick={onClear}
               title="清空日志"
-              className="flex h-6.5 items-center gap-1 rounded-lg border border-[var(--border-hairline)] bg-[var(--surface-subtle)] px-2 text-[11px] font-medium text-[var(--ink-secondary)] transition-colors hover:text-rose-600 dark:hover:text-rose-400 cursor-pointer"
+              className="flex h-7 items-center gap-1 rounded-lg border border-[var(--border-hairline)] bg-[var(--surface-subtle)] px-2 text-[11.5px] font-medium text-[var(--ink-secondary)] transition-colors hover:text-rose-600 dark:hover:text-rose-400 cursor-pointer"
             >
               <Trash2 className="h-3 w-3" />
               <span>清空</span>
@@ -219,8 +183,7 @@ export function LogConsole({ logs, onClear, onCopyLogs, onCopyLine, onOpenPath }
       {!collapsed && (
         <div
           ref={scrollRef}
-          onScroll={handleScroll}
-          className="font-mono-code min-h-[168px] flex-1 overflow-auto bg-[#fafbfc] p-2 text-[11.5px] leading-[1.5] dark:bg-[#0d111a]"
+          className="font-mono-code min-h-[120px] flex-1 overflow-auto bg-[#fafbfc] p-2.5 text-[11.5px] leading-[1.6] dark:bg-[#0d111a]"
         >
           {filtered.length === 0 ? (
             <div className="flex h-full items-center justify-center text-[12px] text-[var(--ink-muted)] font-sans">
@@ -233,7 +196,7 @@ export function LogConsole({ logs, onClear, onCopyLogs, onCopyLine, onOpenPath }
                 return (
                   <div
                     key={entry.id}
-                    className="group flex items-start gap-2 rounded px-1.5 py-0.5 hover:bg-slate-200/50 dark:hover:bg-slate-800/60"
+                    className="flex items-start gap-2 rounded px-1.5 py-0.5 hover:bg-slate-200/50 dark:hover:bg-slate-800/60"
                   >
                     <span className="shrink-0 text-[10.5px] text-[var(--ink-muted)] select-none">
                       {entry.timestamp}
@@ -243,28 +206,9 @@ export function LogConsole({ logs, onClear, onCopyLogs, onCopyLine, onOpenPath }
                     >
                       {style.label}
                     </span>
-                    <span className={`min-w-0 flex-1 whitespace-pre-wrap break-words [overflow-wrap:anywhere] ${style.text}`}>
+                    <span className={`whitespace-pre-wrap break-all ${style.text}`}>
                       {entry.message}
                     </span>
-                    {entry.actionPath && (
-                      <button
-                        type="button"
-                        onClick={() => onOpenPath(entry.actionPath!)}
-                        title={`打开：${entry.actionPath}`}
-                        className="inline-flex shrink-0 items-center gap-1 rounded bg-blue-500/12 px-1.5 py-0.5 font-sans text-[10.5px] font-medium text-blue-700 transition-colors hover:bg-blue-500/20 dark:text-blue-300 cursor-pointer"
-                      >
-                        <FolderOpen className="h-3 w-3" />
-                        <span>{entry.actionLabel || '打开位置'}</span>
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => onCopyLine(`[${entry.timestamp}] [${entry.level.toUpperCase()}] ${entry.message}`)}
-                      title="复制此条日志"
-                      className="flex h-4.5 w-4.5 shrink-0 items-center justify-center rounded text-[var(--ink-muted)] opacity-0 transition-opacity hover:bg-slate-300/60 hover:text-[var(--ink-primary)] focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500/60 group-hover:opacity-100 dark:hover:bg-slate-700/60 cursor-pointer"
-                    >
-                      <Copy className="h-3 w-3" />
-                    </button>
                   </div>
                 );
               })}

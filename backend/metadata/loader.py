@@ -3,8 +3,6 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import partial
-import hashlib
-import json
 from pathlib import Path
 import threading
 from typing import Callable, Dict, Iterable, List, Optional, Tuple
@@ -14,55 +12,9 @@ from metadata import PackageLabel, read_package_label
 from metadata.cache import PersistentMetadataCache, make_cache_key
 
 
-_TOOL_HASH_CACHE: Dict[tuple, str] = {}
-_TOOL_HASH_LOCK = threading.Lock()
-
-
 def file_fingerprint(path: Path) -> tuple:
     stat = path.stat()
     return (str(path.resolve()), stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns, stat.st_ino)
-
-
-def tool_fingerprint(tool_path: Optional[str]) -> Optional[tuple]:
-    """Return a stable content/manifest fingerprint immune to onefile temp path changes."""
-    if not tool_path:
-        return None
-    path = Path(tool_path)
-    manifest_path = path.with_name("manifest.json")
-    if manifest_path.is_file():
-        try:
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-            files = manifest.get("files") if isinstance(manifest, dict) else None
-            if isinstance(files, dict):
-                expected = files.get(path.name)
-                if isinstance(expected, str) and len(expected) == 64:
-                    return ("manifest-sha256", path.name, expected)
-        except (OSError, ValueError):
-            pass
-
-    try:
-        st = path.stat()
-        stat_key = (str(path.resolve()), st.st_size, st.st_mtime_ns, st.st_ctime_ns, st.st_ino)
-    except OSError:
-        return ("missing", str(path))
-
-    with _TOOL_HASH_LOCK:
-        cached = _TOOL_HASH_CACHE.get(stat_key)
-    if cached is not None:
-        return ("file-sha256", path.name, cached)
-
-    try:
-        hasher = hashlib.sha256()
-        with path.open("rb") as handle:
-            while chunk := handle.read(65536):
-                hasher.update(chunk)
-        digest = hasher.hexdigest()
-    except OSError:
-        return ("stat", path.name, st.st_size, st.st_mtime_ns)
-
-    with _TOOL_HASH_LOCK:
-        _TOOL_HASH_CACHE[stat_key] = digest
-    return ("file-sha256", path.name, digest)
 
 
 class PackageLabelLoader:
@@ -84,21 +36,13 @@ class PackageLabelLoader:
         max_workers: int = 4,
     ) -> None:
         self.post = post
-        self._cache_path = cache_path
-        self._cache_lock = threading.Lock()
-        self._cache: Optional[PersistentMetadataCache] = None
+        self._cache = PersistentMetadataCache(cache_path=cache_path)
         self._max_workers = max(1, max_workers)
         self._condition = threading.Condition()
         self._generation = 0
         self._pending: Optional[Tuple[int, Tuple[Path, ...], Tuple[Path, ...], Callable[[int, dict, dict, bool], None]]] = None
         self._closed = False
         self._thread: Optional[threading.Thread] = None
-
-    def _get_cache(self) -> PersistentMetadataCache:
-        with self._cache_lock:
-            if self._cache is None:
-                self._cache = PersistentMetadataCache(cache_path=self._cache_path)
-            return self._cache
 
     def submit(
         self,
@@ -124,10 +68,7 @@ class PackageLabelLoader:
             self._closed = True
             self._pending = None
             self._condition.notify()
-        with self._cache_lock:
-            cache = self._cache
-        if cache is not None:
-            cache.flush()
+        self._cache.flush()
 
     def _is_stale(self, generation: int) -> bool:
         with self._condition:
@@ -146,9 +87,8 @@ class PackageLabelLoader:
             fp = file_fingerprint(path)
         except OSError:
             return None
-        cache = self._get_cache()
         cache_key = make_cache_key(fp, tool_key)
-        cached = cache.get(cache_key)
+        cached = self._cache.get(cache_key)
         if cached is not None:
             return path, cached, fp
         label = read_package_label(path, tools)
@@ -157,7 +97,7 @@ class PackageLabelLoader:
                 return None
         except OSError:
             return None
-        cache.put(cache_key, label)
+        self._cache.put(cache_key, label)
         return path, label, fp
 
     def _work(self) -> None:
@@ -177,7 +117,9 @@ class PackageLabelLoader:
 
             try:
                 tools = resolve_metadata_tools()
-                tool_key = tuple(tool_fingerprint(p) for p in (tools.aapt2, tools.restool))
+                tool_key = tuple(
+                    file_fingerprint(Path(p)) if p else None for p in (tools.aapt2, tools.restool)
+                )
             except Exception:
                 labels = {path: PackageLabel(status="invalid") for path in paths}
                 fps = {}
@@ -191,7 +133,6 @@ class PackageLabelLoader:
                 continue
 
             # Phase 1: Instant cache hits for any file already known.
-            cache = self._get_cache()
             cached_labels: Dict[Path, PackageLabel] = {}
             cached_fps: Dict[Path, tuple] = {}
             uncached: List[Path] = []
@@ -202,7 +143,7 @@ class PackageLabelLoader:
                     fp = file_fingerprint(path)
                 except OSError:
                     continue
-                hit = cache.get(make_cache_key(fp, tool_key))
+                hit = self._cache.get(make_cache_key(fp, tool_key))
                 if hit is not None:
                     cached_labels[path] = hit
                     cached_fps[path] = fp
@@ -263,4 +204,4 @@ class PackageLabelLoader:
                     if not self._is_stale(generation):
                         self.post(partial(on_update, generation, batch_labels, batch_fps, True))
 
-            cache.flush()
+            self._cache.flush()

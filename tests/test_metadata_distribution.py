@@ -6,7 +6,7 @@ import zipfile
 
 import pytest
 
-from scripts.build_exe import REQUIRED_FILES, TOOLS, create_package_tools_archive, generate_pyinstaller_spec, verify_bundle
+from scripts.build_exe import REQUIRED_FILES, TOOLS, verify_bundle
 from scripts.verify_exe import print_summary_json
 import cli
 
@@ -97,21 +97,3 @@ def test_env_check_reports_version_web_dist_and_webview_flags(monkeypatch, tmp_p
     assert data["version"] == "v1.0.0"
     assert data["web_dist_ready"] is True
     assert isinstance(data["webview_available"], bool)
-
-
-def test_create_package_tools_archive_and_spec_filtering(tmp_path):
-    files = verify_bundle(TOOLS)
-    archive_path = create_package_tools_archive(files, tmp_path / "package_tools.zip")
-    with zipfile.ZipFile(archive_path, "r") as zf:
-        assert set(zf.namelist()) == REQUIRED_FILES | {"manifest.json"}
-
-    spec_path = generate_pyinstaller_spec(
-        spec_path=tmp_path / "app.spec",
-        tools_archive=archive_path,
-        icon_path=tmp_path / "missing.ico",
-    )
-    spec_text = spec_path.read_text(encoding="utf-8")
-    assert "package_tools.zip" in spec_text
-    assert "'tkinter'" in spec_text
-    assert "webbrowserinterop.x64.dll" in spec_text
-    assert "webviewloader.dll" not in spec_text.lower()

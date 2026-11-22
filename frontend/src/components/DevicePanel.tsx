@@ -146,11 +146,11 @@ export function DevicePanel({
   return (
     <section className="flex flex-col rounded-xl border border-[var(--border-hairline)] bg-[var(--surface-card)] shadow-xs">
       {/* Header + Action Toolbar */}
-      <div className="flex flex-wrap items-center justify-between gap-1.5 border-b border-[var(--border-hairline)] px-3 py-2">
-        <div className="flex flex-wrap items-center gap-1.5">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--border-hairline)] px-3.5 py-2.5">
+        <div className="flex flex-wrap items-center gap-2">
           <div className="flex items-center gap-1.5">
             <Smartphone className="h-4 w-4 text-blue-600 dark:text-blue-400" />
-            <h2 className="text-[12.5px] font-semibold text-[var(--ink-primary)]">连接设备</h2>
+            <h2 className="text-[13px] font-semibold text-[var(--ink-primary)]">连接设备</h2>
           </div>
 
           {/* Platform filter pills */}
@@ -166,7 +166,7 @@ export function DevicePanel({
                 key={key}
                 type="button"
                 onClick={() => setFilter(key)}
-                className={`rounded-md px-1.5 py-0.5 text-[11px] font-medium transition-all cursor-pointer ${
+                className={`rounded-md px-2 py-0.5 text-[11px] font-medium transition-all cursor-pointer ${
                   filter === key
                     ? 'bg-[var(--surface-card)] text-[var(--ink-primary)] shadow-xs'
                     : 'text-[var(--ink-secondary)] hover:text-[var(--ink-primary)]'
@@ -181,7 +181,7 @@ export function DevicePanel({
             <button
               type="button"
               onClick={selectAllVisible}
-              className="flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-medium text-[var(--ink-secondary)] transition-colors hover:bg-[var(--surface-subtle)] hover:text-[var(--ink-primary)] cursor-pointer"
+              className="flex items-center gap-1 rounded-md px-2 py-1 text-[11.5px] font-medium text-[var(--ink-secondary)] transition-colors hover:bg-[var(--surface-subtle)] hover:text-[var(--ink-primary)] cursor-pointer"
             >
               {allVisibleSelected ? (
                 <CheckSquare className="h-3.5 w-3.5 text-blue-600 dark:text-blue-400" />
@@ -200,9 +200,9 @@ export function DevicePanel({
             disabled={refreshing}
             onClick={onRefresh}
             title="并行探测 ADB / HDC 设备并重新扫描安装包 (F5)"
-            className="flex items-center gap-1 rounded-lg border border-[var(--border-hairline)] bg-[var(--surface-subtle)] px-2 py-1 text-[11.5px] font-medium text-[var(--ink-primary)] transition-colors hover:bg-slate-200/70 disabled:opacity-50 dark:hover:bg-slate-700/50 cursor-pointer"
+            className="flex items-center gap-1.5 rounded-lg border border-[var(--border-hairline)] bg-[var(--surface-subtle)] px-2.5 py-1.5 text-[12px] font-medium text-[var(--ink-primary)] transition-colors hover:bg-slate-200/70 disabled:opacity-50 dark:hover:bg-slate-700/50 cursor-pointer"
           >
-            <RefreshCw className={`h-3 w-3 ${refreshing ? 'animate-spin text-blue-500' : ''}`} />
+            <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin text-blue-500' : ''}`} />
             <span>{refreshing ? '刷新中…' : '刷新设备'}</span>
           </button>
 
@@ -215,12 +215,12 @@ export function DevicePanel({
                 ? '获取当前 Harmony 设备的 UDID 并复制到剪贴板'
                 : '需选中单台 Harmony 设备（或仅连接一台 Harmony 设备）'
             }
-            className="flex items-center gap-1 rounded-lg border border-[var(--border-hairline)] bg-[var(--surface-card)] px-2 py-1 text-[11.5px] font-medium text-[var(--ink-primary)] transition-colors hover:bg-[var(--surface-subtle)] disabled:cursor-not-allowed disabled:opacity-45 cursor-pointer"
+            className="flex items-center gap-1.5 rounded-lg border border-[var(--border-hairline)] bg-[var(--surface-card)] px-2.5 py-1.5 text-[12px] font-medium text-[var(--ink-primary)] transition-colors hover:bg-[var(--surface-subtle)] disabled:cursor-not-allowed disabled:opacity-45 cursor-pointer"
           >
             {task?.action === 'udid' ? (
-              <Loader2 className="h-3 w-3 animate-spin text-sky-500" />
+              <Loader2 className="h-3.5 w-3.5 animate-spin text-sky-500" />
             ) : (
-              <Fingerprint className="h-3 w-3 text-sky-600 dark:text-sky-400" />
+              <Fingerprint className="h-3.5 w-3.5 text-sky-600 dark:text-sky-400" />
             )}
             <span>{task?.action === 'udid' ? '获取中…' : '获取 UDID'}</span>
           </button>
@@ -234,12 +234,12 @@ export function DevicePanel({
                 ? '拉取目标设备的崩溃日志（Android dropbox / Harmony 近 7 天 ZIP）'
                 : '需选中单台目标设备'
             }
-            className="flex items-center gap-1 rounded-lg border border-[var(--border-hairline)] bg-[var(--surface-card)] px-2 py-1 text-[11.5px] font-medium text-[var(--ink-primary)] transition-colors hover:bg-[var(--surface-subtle)] disabled:cursor-not-allowed disabled:opacity-45 cursor-pointer"
+            className="flex items-center gap-1.5 rounded-lg border border-[var(--border-hairline)] bg-[var(--surface-card)] px-2.5 py-1.5 text-[12px] font-medium text-[var(--ink-primary)] transition-colors hover:bg-[var(--surface-subtle)] disabled:cursor-not-allowed disabled:opacity-45 cursor-pointer"
           >
             {task?.action === 'crash_log' ? (
-              <Loader2 className="h-3 w-3 animate-spin text-amber-500" />
+              <Loader2 className="h-3.5 w-3.5 animate-spin text-amber-500" />
             ) : (
-              <Bug className="h-3 w-3 text-amber-600 dark:text-amber-400" />
+              <Bug className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />
             )}
             <span>{task?.action === 'crash_log' ? '拉取中…' : '崩溃日志'}</span>
           </button>
@@ -255,12 +255,12 @@ export function DevicePanel({
                   ? '直接拉取 Harmony 应用沙箱日志并打包 ZIP'
                   : '仅支持单台 Harmony 设备'
               }
-              className="flex items-center gap-1 rounded-lg border border-[var(--border-hairline)] bg-[var(--surface-card)] px-2 py-1 text-[11.5px] font-medium text-[var(--ink-primary)] transition-colors hover:bg-[var(--surface-subtle)] disabled:cursor-not-allowed disabled:opacity-45 cursor-pointer"
+              className="flex items-center gap-1.5 rounded-lg border border-[var(--border-hairline)] bg-[var(--surface-card)] px-2.5 py-1.5 text-[12px] font-medium text-[var(--ink-primary)] transition-colors hover:bg-[var(--surface-subtle)] disabled:cursor-not-allowed disabled:opacity-45 cursor-pointer"
             >
               {task?.action === 'app_log' ? (
-                <Loader2 className="h-3 w-3 animate-spin text-indigo-500" />
+                <Loader2 className="h-3.5 w-3.5 animate-spin text-indigo-500" />
               ) : (
-                <FileArchive className="h-3 w-3 text-indigo-600 dark:text-indigo-400" />
+                <FileArchive className="h-3.5 w-3.5 text-indigo-600 dark:text-indigo-400" />
               )}
               <span>{task?.action === 'app_log' ? `${task.name}中…` : 'APP 日志'}</span>
               <ChevronDown className="h-3 w-3 opacity-60" />
@@ -307,14 +307,14 @@ export function DevicePanel({
       )}
 
       {/* Device list */}
-      <div className="max-h-[180px] overflow-y-auto divide-y divide-[var(--border-hairline)]">
+      <div className="max-h-[216px] overflow-y-auto divide-y divide-[var(--border-hairline)]">
         {filteredDevices.length === 0 ? (
-          <div className="flex flex-col items-center justify-center gap-1 py-6 text-center">
-            <Smartphone className="h-6 w-6 text-[var(--ink-muted)] opacity-50" />
-            <p className="text-[12px] font-medium text-[var(--ink-secondary)]">
+          <div className="flex flex-col items-center justify-center gap-1.5 py-8 text-center">
+            <Smartphone className="h-7 w-7 text-[var(--ink-muted)] opacity-50" />
+            <p className="text-[12.5px] font-medium text-[var(--ink-secondary)]">
               {devices.length === 0 ? '未检测到已连接的 Android 或 Harmony 设备' : '当前筛选条件下无设备'}
             </p>
-            <p className="text-[11px] text-[var(--ink-muted)]">
+            <p className="text-[11.5px] text-[var(--ink-muted)]">
               请连接 USB 调试后点击右上角「刷新设备」或按 F5
             </p>
           </div>
@@ -333,7 +333,7 @@ export function DevicePanel({
                   if (!isEditing) toggleSelect(device.deviceId);
                 }}
                 onDoubleClick={() => startEdit(device)}
-                className={`group flex items-center gap-2.5 px-3 py-2 transition-colors cursor-pointer ${
+                className={`group flex items-center gap-3 px-3.5 py-2.5 transition-colors cursor-pointer ${
                   isSelected
                     ? 'bg-blue-500/[0.06] dark:bg-blue-500/[0.11]'
                     : device.isNew
@@ -428,20 +428,13 @@ export function DevicePanel({
                 )}
 
                 {/* Connection status */}
-                <div
-                  title={isOnline ? '设备在线' : device.status}
-                  className="flex shrink-0 items-center gap-1.5 text-[11.5px]"
-                >
+                <div className="hidden md:flex shrink-0 items-center gap-1.5 text-[11.5px]">
                   <span
                     className={`h-2 w-2 rounded-full ${
                       isOnline ? 'bg-emerald-500 online-pulse' : 'bg-amber-500'
                     }`}
                   />
-                  <span
-                    className={`hidden sm:inline ${
-                      isOnline ? 'text-emerald-700 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'
-                    }`}
-                  >
+                  <span className={isOnline ? 'text-emerald-700 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}>
                     {isOnline ? '在线' : device.status}
                   </span>
                 </div>

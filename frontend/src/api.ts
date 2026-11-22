@@ -19,11 +19,6 @@ interface PyWebViewAPI {
   update_settings: (updates: Partial<AppSettings>) => Promise<{ ok: boolean; settings: AppSettings }>;
   diagnose_environment: () => Promise<{ ok: boolean; tools: Record<string, ToolDiagnostic> }>;
   clear_logs: () => Promise<{ ok: boolean }>;
-  window_start_drag: () => Promise<{ ok: boolean }>;
-  window_start_resize: (edge: string) => Promise<{ ok: boolean }>;
-  window_minimize: () => Promise<{ ok: boolean }>;
-  window_toggle_maximize: () => Promise<{ ok: boolean; maximized?: boolean }>;
-  window_close: () => Promise<{ ok: boolean }>;
 }
 
 declare global {
@@ -180,8 +175,7 @@ function createPreviewMockState(): InitialAppState {
       { id: 1, preview: true, timestamp: '11:50:01', level: 'info', message: '设备列表已刷新：Android 2 台，Harmony 1 台，总计 3 台', deviceId: null },
       { id: 2, preview: true, timestamp: '11:50:01', level: 'success', message: '新增设备已置顶高亮：测试主力机 S24', deviceId: 'R5CW90ABCDE' },
       { id: 3, preview: true, timestamp: '11:50:02', level: 'info', message: '安装包扫描完成：D:\\Builds\\Release\\2026-11-21 · APK=app-release-1.4.2.apk，HAP=entry-default-signed.hap', deviceId: null },
-      { id: 4, preview: true, timestamp: '11:50:02', level: 'success', message: '获取崩溃日志成功：设备 Mate 70 Pro NEXT，共 16 个文件，ZIP: D:\\harmony_crash_21A0224715000482.zip', deviceId: '21A0224715000482', actionPath: 'D:\\harmony_crash_21A0224715000482.zip', actionLabel: '打开位置' },
-      { id: 5, preview: true, timestamp: '11:50:03', level: 'cmd', message: '预览模式：当前运行在浏览器中（未连接 PyWebView 桌面容器）', deviceId: null },
+      { id: 4, preview: true, timestamp: '11:50:02', level: 'cmd', message: '预览模式：当前运行在浏览器中（未连接 PyWebView 桌面容器）', deviceId: null },
     ],
     logClearGen: 0,
     settings: {
@@ -206,7 +200,6 @@ function createPreviewMockState(): InitialAppState {
 
 let mockState: InitialAppState | null = null;
 let mockLogClearGen = 0;
-let mockMaximized = false;
 
 function emitMock(type: InstallerEvent['type'], payload: any) {
   window.__INSTALLER_EVENT__?.({ type, payload });
@@ -457,42 +450,5 @@ export const bridgeApi = {
     }
     emitMock('logs_cleared', { clearGen: mockLogClearGen });
     return { ok: true };
-  },
-
-  async windowStartDrag() {
-    if (window.pywebview?.api) {
-      return window.pywebview.api.window_start_drag();
-    }
-    return { ok: false };
-  },
-
-  async windowStartResize(edge: string) {
-    if (window.pywebview?.api) {
-      return window.pywebview.api.window_start_resize(edge);
-    }
-    return { ok: false };
-  },
-
-  async windowMinimize() {
-    if (window.pywebview?.api) {
-      return window.pywebview.api.window_minimize();
-    }
-    return { ok: false };
-  },
-
-  async windowToggleMaximize() {
-    if (window.pywebview?.api) {
-      return window.pywebview.api.window_toggle_maximize();
-    }
-    mockMaximized = !mockMaximized;
-    emitMock('window_state', { maximized: mockMaximized });
-    return { ok: true, maximized: mockMaximized };
-  },
-
-  async windowClose() {
-    if (window.pywebview?.api) {
-      return window.pywebview.api.window_close();
-    }
-    return { ok: false };
   },
 };

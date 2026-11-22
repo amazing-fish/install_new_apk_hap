@@ -62,8 +62,6 @@ export interface LogEntry {
   level: LogLevel;
   message: string;
   deviceId: string | null;
-  actionPath?: string | null;
-  actionLabel?: string | null;
 }
 
 export type ThemeMode = 'system' | 'light' | 'dark';
@@ -119,7 +117,6 @@ export interface InitialAppState {
   settings: AppSettings;
   tools: Record<string, ToolDiagnostic>;
   appLogTargets: AppLogTargetItem[];
-  windowMaximized?: boolean;
   revisions?: {
     devices: number;
     packages: number;
@@ -129,6 +126,6 @@ export interface InitialAppState {
 }
 
 export interface InstallerEvent {
-  type: 'devices' | 'packages' | 'task' | 'log' | 'logs_cleared' | 'toast' | 'settings' | 'tools' | 'window_state';
+  type: 'devices' | 'packages' | 'task' | 'log' | 'logs_cleared' | 'toast' | 'settings';
   payload: any;
 }
